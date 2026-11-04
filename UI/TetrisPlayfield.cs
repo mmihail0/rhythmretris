@@ -5,10 +5,12 @@ using osu.Framework.Bindables;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Shapes;
+using osu.Framework.Graphics.Sprites;
 using osu.Framework.Input.Bindings;
 using osu.Framework.Input.Events;
 using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.ControlPoints;
+using osu.Game.Graphics;
 using osu.Game.Rulesets.Objects.Drawables;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Tetris.Objects;
@@ -25,7 +27,11 @@ namespace osu.Game.Rulesets.Tetris.UI
         public const int Columns = 10;
         public const int Rows = 20;
         public const float CellSize = 24f;
-        public const float BorderThickness = 3f;
+        public const float FrameThickness = 3f;
+
+        private const double das_delay = 135.0;
+        private const double arr_interval = 28.0;
+        private const double soft_drop_interval = 35.0;
 
         [Resolved(CanBeNull = true)]
         private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
@@ -44,6 +50,9 @@ namespace osu.Game.Rulesets.Tetris.UI
         private readonly Container boardContainer;
         private readonly Container gridLinesContainer;
         private readonly Container blockContainer;
+        private readonly Container holdPieceContainer;
+        private readonly Container[] nextPieceContainers = new Container[5];
+
         private readonly Box[,] visualGrid = new Box[Columns, Rows];
         private readonly int[,] grid = new int[Columns, Rows];
 
@@ -53,6 +62,17 @@ namespace osu.Game.Rulesets.Tetris.UI
         private int currentPiece = 1;
         private int currentRotation = 0;
         private Vector2I piecePos;
+
+        private int heldPiece = 0;
+        private bool canHold = true;
+
+        private bool leftHeld;
+        private bool rightHeld;
+        private bool softDropHeld;
+        private int moveDirection;
+        private double moveHoldTimer;
+        private double moveRepeatTimer;
+        private double softDropTimer;
 
         private double lastDropTime = double.MinValue;
 
@@ -113,13 +133,13 @@ namespace osu.Game.Rulesets.Tetris.UI
         private static readonly Color4[] PieceColors = new[]
         {
             Color4.Transparent,
-            Color4.Cyan,
-            Color4.Blue,
-            Color4.Orange,
-            Color4.Yellow,
-            Color4.LimeGreen,
-            Color4.Purple,
-            Color4.Red
+            new Color4(45, 215, 185, 255),  // I - TETR.IO Cyan/Teal
+            new Color4(80, 95, 215, 255),   // J - TETR.IO Indigo/Blue
+            new Color4(225, 130, 60, 255),  // L - TETR.IO Orange
+            new Color4(225, 195, 55, 255),  // O - TETR.IO Yellow
+            new Color4(140, 210, 55, 255),  // S - TETR.IO Lime Green
+            new Color4(185, 75, 195, 255),  // T - TETR.IO Purple
+            new Color4(220, 70, 75, 255)    // Z - TETR.IO Red
         };
 
         public TetrisPlayfield()
@@ -129,6 +149,10 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             float boardWidth = Columns * CellSize;
             float boardHeight = Rows * CellSize;
+            float panelWidth = 116f;
+            float headerHeight = 22f;
+            float holdBodyHeight = 76f;
+            float nextBodyHeight = 330f;
 
             InternalChildren = new Drawable[]
             {
@@ -140,6 +164,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                     Origin = Anchor.Centre,
                     Children = new Drawable[]
                     {
+                        // Playfield dark background
                         new Box
                         {
                             RelativeSizeAxes = Axes.Both,
@@ -154,25 +179,25 @@ namespace osu.Game.Rulesets.Tetris.UI
                         {
                             RelativeSizeAxes = Axes.Both
                         },
-                        // Left white outline (TETR.IO style open-top or full frame)
+                        // Playfield Left white outline
                         new Box
                         {
-                            Position = new Vector2(-BorderThickness, 0),
-                            Size = new Vector2(BorderThickness, boardHeight + BorderThickness),
+                            Position = new Vector2(-FrameThickness, 0),
+                            Size = new Vector2(FrameThickness, boardHeight + FrameThickness),
                             Colour = Color4.White
                         },
-                        // Right white outline
+                        // Playfield Right white outline
                         new Box
                         {
                             Position = new Vector2(boardWidth, 0),
-                            Size = new Vector2(BorderThickness, boardHeight + BorderThickness),
+                            Size = new Vector2(FrameThickness, boardHeight + FrameThickness),
                             Colour = Color4.White
                         },
-                        // Bottom white outline
+                        // Playfield Bottom white outline
                         new Box
                         {
-                            Position = new Vector2(-BorderThickness, boardHeight),
-                            Size = new Vector2(boardWidth + BorderThickness * 2, BorderThickness),
+                            Position = new Vector2(-FrameThickness, boardHeight),
+                            Size = new Vector2(boardWidth + FrameThickness * 2, FrameThickness),
                             Colour = Color4.White
                         },
                         // Top subtle threshold line
@@ -182,6 +207,130 @@ namespace osu.Game.Rulesets.Tetris.UI
                             Size = new Vector2(boardWidth, 1f),
                             Colour = Color4.White,
                             Alpha = 0.35f
+                        },
+
+                        // ==========================================
+                        // HOLD PANEL (Top-Left, TETR.IO style)
+                        // ==========================================
+                        new Container
+                        {
+                            Position = new Vector2(-FrameThickness - panelWidth, 0),
+                            Size = new Vector2(panelWidth, headerHeight + holdBodyHeight),
+                            Children = new Drawable[]
+                            {
+                                // White Header Bar
+                                new Box
+                                {
+                                    Size = new Vector2(panelWidth, headerHeight),
+                                    Colour = Color4.White
+                                },
+                                new SpriteText
+                                {
+                                    Text = "HOLD",
+                                    Font = OsuFont.GetFont(weight: FontWeight.Bold, size: 17),
+                                    Colour = Color4.Black,
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.CentreLeft,
+                                    Position = new Vector2(6f, headerHeight / 2f)
+                                },
+                                // Dark Body
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight),
+                                    Size = new Vector2(panelWidth, holdBodyHeight),
+                                    Colour = Color4.Black,
+                                    Alpha = 0.85f
+                                },
+                                // Left Border
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight),
+                                    Size = new Vector2(FrameThickness, holdBodyHeight),
+                                    Colour = Color4.White
+                                },
+                                // Bottom Border
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight + holdBodyHeight - FrameThickness),
+                                    Size = new Vector2(panelWidth, FrameThickness),
+                                    Colour = Color4.White
+                                },
+                                // Bottom-Left Chamfer Accent
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight + holdBodyHeight - 10f),
+                                    Size = new Vector2(10f, 10f),
+                                    Colour = Color4.White
+                                },
+                                // Hold Piece Preview Container
+                                holdPieceContainer = new Container
+                                {
+                                    Position = new Vector2(panelWidth / 2f, headerHeight + holdBodyHeight / 2f),
+                                    Origin = Anchor.Centre
+                                }
+                            }
+                        },
+
+                        // ==========================================
+                        // NEXT PANEL (Top-Right, TETR.IO style)
+                        // ==========================================
+                        new Container
+                        {
+                            Position = new Vector2(boardWidth + FrameThickness, 0),
+                            Size = new Vector2(panelWidth, headerHeight + nextBodyHeight),
+                            Children = new Drawable[]
+                            {
+                                // White Header Bar
+                                new Box
+                                {
+                                    Size = new Vector2(panelWidth, headerHeight),
+                                    Colour = Color4.White
+                                },
+                                new SpriteText
+                                {
+                                    Text = "NEXT",
+                                    Font = OsuFont.GetFont(weight: FontWeight.Bold, size: 17),
+                                    Colour = Color4.Black,
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.CentreLeft,
+                                    Position = new Vector2(6f, headerHeight / 2f)
+                                },
+                                // Dark Body
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight),
+                                    Size = new Vector2(panelWidth, nextBodyHeight),
+                                    Colour = Color4.Black,
+                                    Alpha = 0.85f
+                                },
+                                // Right Border
+                                new Box
+                                {
+                                    Position = new Vector2(panelWidth - FrameThickness, headerHeight),
+                                    Size = new Vector2(FrameThickness, nextBodyHeight),
+                                    Colour = Color4.White
+                                },
+                                // Bottom Border
+                                new Box
+                                {
+                                    Position = new Vector2(0, headerHeight + nextBodyHeight - FrameThickness),
+                                    Size = new Vector2(panelWidth, FrameThickness),
+                                    Colour = Color4.White
+                                },
+                                // Bottom-Right Chamfer Accent
+                                new Box
+                                {
+                                    Position = new Vector2(panelWidth - 10f, headerHeight + nextBodyHeight - 10f),
+                                    Size = new Vector2(10f, 10f),
+                                    Colour = Color4.White
+                                },
+                                new Container
+                                {
+                                    Position = new Vector2(0, headerHeight),
+                                    Size = new Vector2(panelWidth, nextBodyHeight),
+                                    Children = CreateNextSlotContainers(panelWidth, nextBodyHeight)
+                                }
+                            }
                         }
                     }
                 }
@@ -229,6 +378,22 @@ namespace osu.Game.Rulesets.Tetris.UI
             SpawnNextPiece();
         }
 
+        private Drawable[] CreateNextSlotContainers(float panelWidth, float bodyHeight)
+        {
+            var slots = new Drawable[5];
+            float slotSpacing = (bodyHeight - 16f) / 5f;
+            for (int i = 0; i < 5; i++)
+            {
+                nextPieceContainers[i] = new Container
+                {
+                    Position = new Vector2(panelWidth / 2f, 10f + slotSpacing * (i + 0.5f)),
+                    Origin = Anchor.Centre
+                };
+                slots[i] = nextPieceContainers[i];
+            }
+            return slots;
+        }
+
         public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
         {
             if (isToppedOut)
@@ -237,10 +402,18 @@ namespace osu.Game.Rulesets.Tetris.UI
             switch (e.Action)
             {
                 case TetrisAction.MoveLeft:
+                    leftHeld = true;
+                    moveDirection = -1;
+                    moveHoldTimer = 0;
+                    moveRepeatTimer = 0;
                     Move(-1);
                     return true;
 
                 case TetrisAction.MoveRight:
+                    rightHeld = true;
+                    moveDirection = 1;
+                    moveHoldTimer = 0;
+                    moveRepeatTimer = 0;
                     Move(1);
                     return true;
 
@@ -253,11 +426,17 @@ namespace osu.Game.Rulesets.Tetris.UI
                     return true;
 
                 case TetrisAction.SoftDrop:
+                    softDropHeld = true;
+                    softDropTimer = 0;
                     SoftDrop();
                     return true;
 
                 case TetrisAction.HardDrop:
                     HardDrop();
+                    return true;
+
+                case TetrisAction.Hold:
+                    HoldPiece();
                     return true;
             }
 
@@ -266,6 +445,40 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public void OnReleased(KeyBindingReleaseEvent<TetrisAction> e)
         {
+            switch (e.Action)
+            {
+                case TetrisAction.MoveLeft:
+                    leftHeld = false;
+                    if (rightHeld)
+                    {
+                        moveDirection = 1;
+                        moveHoldTimer = 0;
+                        moveRepeatTimer = 0;
+                    }
+                    else
+                    {
+                        moveDirection = 0;
+                    }
+                    break;
+
+                case TetrisAction.MoveRight:
+                    rightHeld = false;
+                    if (leftHeld)
+                    {
+                        moveDirection = -1;
+                        moveHoldTimer = 0;
+                        moveRepeatTimer = 0;
+                    }
+                    else
+                    {
+                        moveDirection = 0;
+                    }
+                    break;
+
+                case TetrisAction.SoftDrop:
+                    softDropHeld = false;
+                    break;
+            }
         }
 
         private void RefillBag()
@@ -279,12 +492,27 @@ namespace osu.Game.Rulesets.Tetris.UI
             }
         }
 
+        private void EnsureBagHasPieces(int minCount = 7)
+        {
+            while (bag.Count < minCount)
+                RefillBag();
+        }
+
         private void SpawnNextPiece()
         {
-            if (bag.Count == 0) RefillBag();
+            EnsureBagHasPieces(7);
             currentPiece = bag[0];
             bag.RemoveAt(0);
+            EnsureBagHasPieces(7);
 
+            canHold = true;
+            ResetPieceToTop();
+            UpdateQueuePreviews();
+            RedrawGrid();
+        }
+
+        private void ResetPieceToTop()
+        {
             currentRotation = 0;
             piecePos = new Vector2I(3, 0);
 
@@ -309,8 +537,113 @@ namespace osu.Game.Rulesets.Tetris.UI
 
                 Array.Clear(grid, 0, grid.Length);
             }
+        }
 
+        public void HoldPiece()
+        {
+            if (!canHold || isToppedOut)
+                return;
+
+            canHold = false;
+
+            if (heldPiece == 0)
+            {
+                heldPiece = currentPiece;
+                EnsureBagHasPieces(7);
+                currentPiece = bag[0];
+                bag.RemoveAt(0);
+                EnsureBagHasPieces(7);
+            }
+            else
+            {
+                int swap = currentPiece;
+                currentPiece = heldPiece;
+                heldPiece = swap;
+            }
+
+            ResetPieceToTop();
+            UpdateQueuePreviews();
             RedrawGrid();
+        }
+
+        private void UpdateQueuePreviews()
+        {
+            RenderMiniPiece(holdPieceContainer, heldPiece, canHold ? 1f : 0.45f);
+
+            for (int i = 0; i < 5; i++)
+            {
+                int nextPiece = i < bag.Count ? bag[i] : 0;
+                RenderMiniPiece(nextPieceContainers[i], nextPiece, 1f);
+            }
+        }
+
+        private static void RenderMiniPiece(Container target, int pieceId, float opacity)
+        {
+            target.Clear();
+            if (pieceId <= 0 || pieceId >= Tetrominoes.Length)
+                return;
+
+            var shape = Tetrominoes[pieceId][0];
+            int size = shape.GetLength(0);
+
+            int minR = size, maxR = -1, minC = size, maxC = -1;
+            for (int r = 0; r < size; r++)
+            {
+                for (int c = 0; c < size; c++)
+                {
+                    if (shape[r, c] != 0)
+                    {
+                        if (r < minR) minR = r;
+                        if (r > maxR) maxR = r;
+                        if (c < minC) minC = c;
+                        if (c > maxC) maxC = c;
+                    }
+                }
+            }
+
+            if (maxR < minR || maxC < minC)
+                return;
+
+            const float mini_cell = 18f;
+            float width = (maxC - minC + 1) * mini_cell;
+            float height = (maxR - minR + 1) * mini_cell;
+            Color4 baseColor = PieceColors[pieceId];
+
+            for (int r = minR; r <= maxR; r++)
+            {
+                for (int c = minC; c <= maxC; c++)
+                {
+                    if (shape[r, c] == 0)
+                        continue;
+
+                    float px = (c - minC) * mini_cell - width / 2f;
+                    float py = (r - minR) * mini_cell - height / 2f;
+
+                    target.Add(new Container
+                    {
+                        Position = new Vector2(px, py),
+                        Size = new Vector2(mini_cell - 1f),
+                        Alpha = opacity,
+                        Children = new Drawable[]
+                        {
+                            new Box
+                            {
+                                RelativeSizeAxes = Axes.Both,
+                                Colour = baseColor
+                            },
+                            // TETR.IO style inner block bevel highlight
+                            new Box
+                            {
+                                Anchor = Anchor.Centre,
+                                Origin = Anchor.Centre,
+                                Size = new Vector2(mini_cell - 7f),
+                                Colour = Color4.White,
+                                Alpha = 0.16f
+                            }
+                        }
+                    });
+                }
+            }
         }
 
         private void EnsureDifficultyMultiplier()
@@ -324,14 +657,11 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             multiplierCalculated = true;
 
-            // Base 1.5x speed boost across all difficulties, plus scaling with beatmap note density (NPS)
-            // so higher star difficulties of the same song fall noticeably faster than Easy/Normal.
             double npsScale = 1.0;
             if (activeBeatmap.HitObjects.Count > 1)
             {
                 double durationSeconds = Math.Max((activeBeatmap.HitObjects[^1].StartTime - activeBeatmap.HitObjects[0].StartTime) / 1000.0, 10.0);
                 double nps = activeBeatmap.HitObjects.Count / durationSeconds;
-                // e.g. 1 NPS (Easy) -> ~1.12x, 3 NPS (Normal/Hard) -> ~1.36x, 5 NPS (Insane) -> ~1.6x, 8 NPS (Extra) -> ~1.96x
                 npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
             }
 
@@ -346,6 +676,44 @@ namespace osu.Game.Rulesets.Tetris.UI
                 return;
 
             EnsureDifficultyMultiplier();
+
+            double dt = Math.Max(Time.Elapsed, 0);
+
+            // Handle DAS / ARR when holding Left or Right
+            if (moveDirection != 0)
+            {
+                moveHoldTimer += dt;
+                if (moveHoldTimer >= das_delay)
+                {
+                    moveRepeatTimer += dt;
+                    while (moveRepeatTimer >= arr_interval)
+                    {
+                        moveRepeatTimer -= arr_interval;
+                        Move(moveDirection);
+                    }
+                }
+            }
+
+            // Handle continuous Soft Drop when holding Down
+            if (softDropHeld)
+            {
+                softDropTimer += dt;
+                while (softDropTimer >= soft_drop_interval)
+                {
+                    softDropTimer -= soft_drop_interval;
+                    var nextPos = new Vector2I(piecePos.X, piecePos.Y + 1);
+                    if (!CheckCollision(nextPos, currentRotation))
+                    {
+                        piecePos = nextPos;
+                        lastDropTime = Time.Current;
+                        RedrawGrid();
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+            }
 
             var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;

@@ -69,6 +69,7 @@ namespace osu.Game.Rulesets.Tetris
             new KeyBinding(InputKey.Space, TetrisAction.HardDrop),
             new KeyBinding(InputKey.Up, TetrisAction.RotateCW),
             new KeyBinding(InputKey.Z, TetrisAction.RotateCCW),
+            new KeyBinding(InputKey.Shift, TetrisAction.Hold),
             new KeyBinding(InputKey.C, TetrisAction.Hold)
         };
 
