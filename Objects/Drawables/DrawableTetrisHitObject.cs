@@ -29,7 +29,7 @@ namespace osu.Game.Rulesets.Tetris.Objects.Drawables
             else if (absOffset <= 150)
                 ApplyResult(HitResult.Meh);
             else
-                ApplyMinResult();
+                ApplyResult(HitResult.Miss);
         }
 
         public void TriggerUserHit() => UpdateResult(true);
