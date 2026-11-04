@@ -27,6 +27,7 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public IBeatmap? Beatmap { get; set; }
 
+        private readonly Container boardContainer;
         private readonly Container blockContainer;
         private readonly Box[,] visualGrid = new Box[Columns, Rows];
         private readonly int[,] grid = new int[Columns, Rows];
@@ -108,21 +109,30 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public TetrisPlayfield()
         {
-            Size = new Vector2(Columns * CellSize, Rows * CellSize);
             Anchor = Anchor.Centre;
             Origin = Anchor.Centre;
 
             InternalChildren = new Drawable[]
             {
-                new Box
+                HitObjectContainer,
+                boardContainer = new Container
                 {
-                    RelativeSizeAxes = Axes.Both,
-                    Colour = Color4.Black,
-                    Alpha = 0.85f
-                },
-                blockContainer = new Container
-                {
-                    RelativeSizeAxes = Axes.Both
+                    Size = new Vector2(Columns * CellSize, Rows * CellSize),
+                    Anchor = Anchor.Centre,
+                    Origin = Anchor.Centre,
+                    Children = new Drawable[]
+                    {
+                        new Box
+                        {
+                            RelativeSizeAxes = Axes.Both,
+                            Colour = Color4.Black,
+                            Alpha = 0.85f
+                        },
+                        blockContainer = new Container
+                        {
+                            RelativeSizeAxes = Axes.Both
+                        }
+                    }
                 }
             };
 

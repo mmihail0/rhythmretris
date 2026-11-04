@@ -16,7 +16,7 @@ namespace osu.Game.Rulesets.Tetris.Objects.Drawables
             if (!userTriggered)
             {
                 if (timeOffset > 150)
-                    ApplyResult(HitResult.Miss);
+                    ApplyResult(HitResult.IgnoreMiss);
                 return;
             }
 
