@@ -19,6 +19,7 @@ using osu.Game.Rulesets.Tetris.Scoring;
 using osu.Game.Rulesets.UI;
 using osuTK;
 using osuTK.Graphics;
+using osuTK.Input;
 
 namespace osu.Game.Rulesets.Tetris.UI
 {
@@ -49,11 +50,14 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private readonly Container boardContainer;
         private readonly Container gridLinesContainer;
+        private readonly Container ghostContainer;
         private readonly Container blockContainer;
         private readonly Container holdPieceContainer;
         private readonly Container[] nextPieceContainers = new Container[5];
 
-        private readonly Box[,] visualGrid = new Box[Columns, Rows];
+        private readonly Container[,] visualGrid = new Container[Columns, Rows];
+        private readonly Box[,] cellFillGrid = new Box[Columns, Rows];
+        private readonly Box[,] cellBevelGrid = new Box[Columns, Rows];
         private readonly int[,] grid = new int[Columns, Rows];
 
         private readonly Random rng = new Random();
@@ -172,6 +176,10 @@ namespace osu.Game.Rulesets.Tetris.UI
                             Alpha = 0.85f
                         },
                         gridLinesContainer = new Container
+                        {
+                            RelativeSizeAxes = Axes.Both
+                        },
+                        ghostContainer = new Container
                         {
                             RelativeSizeAxes = Axes.Both
                         },
@@ -363,14 +371,33 @@ namespace osu.Game.Rulesets.Tetris.UI
             {
                 for (int y = 0; y < Rows; y++)
                 {
-                    var cell = new Box
+                    Box fill;
+                    Box bevel;
+                    var cell = new Container
                     {
                         Size = new Vector2(CellSize - 1),
                         Position = new Vector2(x * CellSize, y * CellSize),
-                        Colour = Color4.Transparent,
-                        Alpha = 0f
+                        Alpha = 0f,
+                        Children = new Drawable[]
+                        {
+                            fill = new Box
+                            {
+                                RelativeSizeAxes = Axes.Both,
+                                Colour = Color4.White
+                            },
+                            bevel = new Box
+                            {
+                                Anchor = Anchor.Centre,
+                                Origin = Anchor.Centre,
+                                Size = new Vector2(CellSize - 9f),
+                                Colour = Color4.White,
+                                Alpha = 0.16f
+                            }
+                        }
                     };
                     visualGrid[x, y] = cell;
+                    cellFillGrid[x, y] = fill;
+                    cellBevelGrid[x, y] = bevel;
                     blockContainer.Add(cell);
                 }
             }
@@ -392,6 +419,17 @@ namespace osu.Game.Rulesets.Tetris.UI
                 slots[i] = nextPieceContainers[i];
             }
             return slots;
+        }
+
+        protected override bool OnKeyDown(KeyDownEvent e)
+        {
+            if (!isToppedOut && !e.Repeat && (e.Key == Key.ShiftLeft || e.Key == Key.ShiftRight))
+            {
+                HoldPiece();
+                return true;
+            }
+
+            return base.OnKeyDown(e);
         }
 
         public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
@@ -568,16 +606,16 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private void UpdateQueuePreviews()
         {
-            RenderMiniPiece(holdPieceContainer, heldPiece, canHold ? 1f : 0.45f);
+            RenderMiniPiece(holdPieceContainer, heldPiece, canHold);
 
             for (int i = 0; i < 5; i++)
             {
                 int nextPiece = i < bag.Count ? bag[i] : 0;
-                RenderMiniPiece(nextPieceContainers[i], nextPiece, 1f);
+                RenderMiniPiece(nextPieceContainers[i], nextPiece, true);
             }
         }
 
-        private static void RenderMiniPiece(Container target, int pieceId, float opacity)
+        private static void RenderMiniPiece(Container target, int pieceId, bool activeColor)
         {
             target.Clear();
             if (pieceId <= 0 || pieceId >= Tetrominoes.Length)
@@ -607,7 +645,7 @@ namespace osu.Game.Rulesets.Tetris.UI
             const float mini_cell = 18f;
             float width = (maxC - minC + 1) * mini_cell;
             float height = (maxR - minR + 1) * mini_cell;
-            Color4 baseColor = PieceColors[pieceId];
+            Color4 baseColor = activeColor ? PieceColors[pieceId] : new Color4(95, 95, 95, 255);
 
             for (int r = minR; r <= maxR; r++)
             {
@@ -623,7 +661,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                     {
                         Position = new Vector2(px, py),
                         Size = new Vector2(mini_cell - 1f),
-                        Alpha = opacity,
+                        Alpha = activeColor ? 1f : 0.75f,
                         Children = new Drawable[]
                         {
                             new Box
@@ -631,7 +669,6 @@ namespace osu.Game.Rulesets.Tetris.UI
                                 RelativeSizeAxes = Axes.Both,
                                 Colour = baseColor
                             },
-                            // TETR.IO style inner block bevel highlight
                             new Box
                             {
                                 Anchor = Anchor.Centre,
@@ -679,7 +716,6 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             double dt = Math.Max(Time.Elapsed, 0);
 
-            // Handle DAS / ARR when holding Left or Right
             if (moveDirection != 0)
             {
                 moveHoldTimer += dt;
@@ -694,7 +730,6 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            // Handle continuous Soft Drop when holding Down
             if (softDropHeld)
             {
                 softDropTimer += dt;
@@ -867,6 +902,66 @@ namespace osu.Game.Rulesets.Tetris.UI
             return false;
         }
 
+        private Vector2I GetGhostPiecePosition()
+        {
+            var ghostPos = piecePos;
+            while (!CheckCollision(new Vector2I(ghostPos.X, ghostPos.Y + 1), currentRotation))
+                ghostPos.Y++;
+            return ghostPos;
+        }
+
+        private static Drawable CreateHollowGhostCell(float x, float y)
+        {
+            float size = CellSize - 1f;
+            float outerBorder = 2.5f;
+            float innerRingSize = size - 7f;
+            float innerHoleSize = innerRingSize - 3f;
+            Color4 ghostColor = new Color4(125, 125, 125, 255);
+
+            return new Container
+            {
+                Position = new Vector2(x, y),
+                Size = new Vector2(size),
+                Alpha = 0.55f,
+                Children = new Drawable[]
+                {
+                    // Outer frame
+                    new Box
+                    {
+                        RelativeSizeAxes = Axes.Both,
+                        Colour = ghostColor
+                    },
+                    // Dark cut-out inside outer frame
+                    new Box
+                    {
+                        Anchor = Anchor.Centre,
+                        Origin = Anchor.Centre,
+                        Size = new Vector2(size - outerBorder * 2f),
+                        Colour = Color4.Black,
+                        Alpha = 0.9f
+                    },
+                    // Inner bevel ring
+                    new Box
+                    {
+                        Anchor = Anchor.Centre,
+                        Origin = Anchor.Centre,
+                        Size = new Vector2(innerRingSize),
+                        Colour = ghostColor,
+                        Alpha = 0.7f
+                    },
+                    // Hollow center
+                    new Box
+                    {
+                        Anchor = Anchor.Centre,
+                        Origin = Anchor.Centre,
+                        Size = new Vector2(innerHoleSize),
+                        Colour = Color4.Black,
+                        Alpha = 0.95f
+                    }
+                }
+            };
+        }
+
         private void RedrawGrid()
         {
             for (int x = 0; x < Columns; x++)
@@ -874,7 +969,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 for (int y = 0; y < Rows; y++)
                 {
                     int val = grid[x, y];
-                    visualGrid[x, y].Colour = PieceColors[val];
+                    cellFillGrid[x, y].Colour = PieceColors[val];
                     if (val == 0)
                     {
                         visualGrid[x, y].Alpha = 0f;
@@ -889,6 +984,30 @@ namespace osu.Game.Rulesets.Tetris.UI
             var shape = Tetrominoes[currentPiece][currentRotation];
             int size = shape.GetLength(0);
 
+            // Render TETR.IO hollowed-out ghost piece at landing position
+            ghostContainer.Clear();
+            var ghostPos = GetGhostPiecePosition();
+            if (ghostPos.Y != piecePos.Y)
+            {
+                for (int r = 0; r < size; r++)
+                {
+                    for (int c = 0; c < size; c++)
+                    {
+                        if (shape[r, c] != 0)
+                        {
+                            int gx = ghostPos.X + c;
+                            int gy = ghostPos.Y + r;
+
+                            if (gx >= 0 && gx < Columns && gy >= 0 && gy < Rows)
+                            {
+                                ghostContainer.Add(CreateHollowGhostCell(gx * CellSize, gy * CellSize));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Render active falling piece
             for (int r = 0; r < size; r++)
             {
                 for (int c = 0; c < size; c++)
@@ -900,7 +1019,7 @@ namespace osu.Game.Rulesets.Tetris.UI
 
                         if (gx >= 0 && gx < Columns && gy >= 0 && gy < Rows)
                         {
-                            visualGrid[gx, gy].Colour = PieceColors[currentPiece];
+                            cellFillGrid[gx, gy].Colour = PieceColors[currentPiece];
                             visualGrid[gx, gy].Alpha = 1f;
                         }
                     }
