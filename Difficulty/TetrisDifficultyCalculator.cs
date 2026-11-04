@@ -12,7 +12,7 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
 {
     public class TetrisDifficultyCalculator : DifficultyCalculator
     {
-        public override int Version => 2;
+        public override int Version => 3;
 
         public TetrisDifficultyCalculator(IRulesetInfo ruleset, IWorkingBeatmap beatmap)
             : base(ruleset, beatmap)
@@ -40,16 +40,17 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
 
             double bpm = (60000.0 / Math.Max(beatLength, 1.0)) * clockRate;
 
-            // Scale off both BPM and note density so different songs AND different difficulties (Normal/Hard/Insane/Extra) have distinct star ratings
-            double densityBonus = 0.0;
+            double npsScale = 1.0;
             if (beatmap.HitObjects.Count > 1)
             {
                 double durationSeconds = Math.Max((beatmap.HitObjects[^1].StartTime - beatmap.HitObjects[0].StartTime) / 1000.0, 10.0) / clockRate;
-                double notesPerSecond = beatmap.HitObjects.Count / durationSeconds;
-                densityBonus = notesPerSecond * 0.45;
+                double nps = beatmap.HitObjects.Count / durationSeconds;
+                npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
             }
 
-            double starRating = (bpm / 65.0) + densityBonus;
+            // Effective steps per minute reflects actual piece fall speed (1.5x base * npsScale)
+            double effectiveStepsPerMinute = bpm * 1.5 * npsScale;
+            double starRating = effectiveStepsPerMinute / 90.0;
 
             if (mods.Any(m => m is ModHidden))
                 starRating *= 1.15;

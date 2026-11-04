@@ -25,6 +25,7 @@ namespace osu.Game.Rulesets.Tetris.UI
         public const int Columns = 10;
         public const int Rows = 20;
         public const float CellSize = 24f;
+        public const float BorderThickness = 3f;
 
         [Resolved(CanBeNull = true)]
         private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
@@ -37,8 +38,11 @@ namespace osu.Game.Rulesets.Tetris.UI
         public bool IsHidden { get; set; }
 
         private bool isToppedOut;
+        private double densityGravityMultiplier = 1.0;
+        private bool multiplierCalculated;
 
         private readonly Container boardContainer;
+        private readonly Container gridLinesContainer;
         private readonly Container blockContainer;
         private readonly Box[,] visualGrid = new Box[Columns, Rows];
         private readonly int[,] grid = new int[Columns, Rows];
@@ -123,12 +127,15 @@ namespace osu.Game.Rulesets.Tetris.UI
             Anchor = Anchor.Centre;
             Origin = Anchor.Centre;
 
+            float boardWidth = Columns * CellSize;
+            float boardHeight = Rows * CellSize;
+
             InternalChildren = new Drawable[]
             {
                 HitObjectContainer,
                 boardContainer = new Container
                 {
-                    Size = new Vector2(Columns * CellSize, Rows * CellSize),
+                    Size = new Vector2(boardWidth, boardHeight),
                     Anchor = Anchor.Centre,
                     Origin = Anchor.Centre,
                     Children = new Drawable[]
@@ -139,13 +146,69 @@ namespace osu.Game.Rulesets.Tetris.UI
                             Colour = Color4.Black,
                             Alpha = 0.85f
                         },
+                        gridLinesContainer = new Container
+                        {
+                            RelativeSizeAxes = Axes.Both
+                        },
                         blockContainer = new Container
                         {
                             RelativeSizeAxes = Axes.Both
+                        },
+                        // Left white outline (TETR.IO style open-top or full frame)
+                        new Box
+                        {
+                            Position = new Vector2(-BorderThickness, 0),
+                            Size = new Vector2(BorderThickness, boardHeight + BorderThickness),
+                            Colour = Color4.White
+                        },
+                        // Right white outline
+                        new Box
+                        {
+                            Position = new Vector2(boardWidth, 0),
+                            Size = new Vector2(BorderThickness, boardHeight + BorderThickness),
+                            Colour = Color4.White
+                        },
+                        // Bottom white outline
+                        new Box
+                        {
+                            Position = new Vector2(-BorderThickness, boardHeight),
+                            Size = new Vector2(boardWidth + BorderThickness * 2, BorderThickness),
+                            Colour = Color4.White
+                        },
+                        // Top subtle threshold line
+                        new Box
+                        {
+                            Position = new Vector2(0, -1f),
+                            Size = new Vector2(boardWidth, 1f),
+                            Colour = Color4.White,
+                            Alpha = 0.35f
                         }
                     }
                 }
             };
+
+            // Subtle inner grid lines like TETR.IO
+            for (int x = 1; x < Columns; x++)
+            {
+                gridLinesContainer.Add(new Box
+                {
+                    Position = new Vector2(x * CellSize, 0),
+                    Size = new Vector2(1f, boardHeight),
+                    Colour = Color4.White,
+                    Alpha = 0.08f
+                });
+            }
+
+            for (int y = 1; y < Rows; y++)
+            {
+                gridLinesContainer.Add(new Box
+                {
+                    Position = new Vector2(0, y * CellSize),
+                    Size = new Vector2(boardWidth, 1f),
+                    Colour = Color4.White,
+                    Alpha = 0.08f
+                });
+            }
 
             for (int x = 0; x < Columns; x++)
             {
@@ -155,8 +218,8 @@ namespace osu.Game.Rulesets.Tetris.UI
                     {
                         Size = new Vector2(CellSize - 1),
                         Position = new Vector2(x * CellSize, y * CellSize),
-                        Colour = Color4.DarkGray,
-                        Alpha = 0.1f
+                        Colour = Color4.Transparent,
+                        Alpha = 0f
                     };
                     visualGrid[x, y] = cell;
                     blockContainer.Add(cell);
@@ -236,8 +299,6 @@ namespace osu.Game.Rulesets.Tetris.UI
                     healthProcessor.Health.Value = 0;
                 }
 
-                // Trigger a judgement so HealthProcessor evaluates its fail conditions immediately.
-                // If NoFail is active, clear the board so the player can keep playing; otherwise stop.
                 JudgeNearestHitObject();
 
                 if (healthProcessor?.HasFailed == true)
@@ -252,6 +313,31 @@ namespace osu.Game.Rulesets.Tetris.UI
             RedrawGrid();
         }
 
+        private void EnsureDifficultyMultiplier()
+        {
+            if (multiplierCalculated)
+                return;
+
+            var activeBeatmap = Beatmap ?? workingBeatmap?.Value?.Beatmap;
+            if (activeBeatmap == null)
+                return;
+
+            multiplierCalculated = true;
+
+            // Base 1.5x speed boost across all difficulties, plus scaling with beatmap note density (NPS)
+            // so higher star difficulties of the same song fall noticeably faster than Easy/Normal.
+            double npsScale = 1.0;
+            if (activeBeatmap.HitObjects.Count > 1)
+            {
+                double durationSeconds = Math.Max((activeBeatmap.HitObjects[^1].StartTime - activeBeatmap.HitObjects[0].StartTime) / 1000.0, 10.0);
+                double nps = activeBeatmap.HitObjects.Count / durationSeconds;
+                // e.g. 1 NPS (Easy) -> ~1.12x, 3 NPS (Normal/Hard) -> ~1.36x, 5 NPS (Insane) -> ~1.6x, 8 NPS (Extra) -> ~1.96x
+                npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
+            }
+
+            densityGravityMultiplier = 1.5 * npsScale;
+        }
+
         protected override void Update()
         {
             base.Update();
@@ -259,11 +345,13 @@ namespace osu.Game.Rulesets.Tetris.UI
             if (isToppedOut)
                 return;
 
+            EnsureDifficultyMultiplier();
+
             var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
-            double beatLength = timingPoint.BeatLength;
+            double stepInterval = timingPoint.BeatLength / densityGravityMultiplier;
 
-            if (Time.Current - lastDropTime >= beatLength)
+            if (Time.Current - lastDropTime >= stepInterval)
             {
                 StepGravity();
                 lastDropTime = Time.Current;
@@ -421,7 +509,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                     visualGrid[x, y].Colour = PieceColors[val];
                     if (val == 0)
                     {
-                        visualGrid[x, y].Alpha = 0.1f;
+                        visualGrid[x, y].Alpha = 0f;
                     }
                     else
                     {
