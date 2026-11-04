@@ -155,6 +155,7 @@ namespace osu.Game.Rulesets.Tetris.UI
         {
             Anchor = Anchor.Centre;
             Origin = Anchor.Centre;
+            DrawableTetrisHitObject.IsDangerState = false;
 
             float boardWidth = Columns * CellSize;
             float boardHeight = Rows * CellSize;
@@ -579,6 +580,8 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             if (CheckCollision(piecePos, currentRotation))
             {
+                DrawableTetrisHitObject.IsDangerState = true;
+
                 if (healthProcessor is TetrisHealthProcessor tetrisHealth)
                 {
                     tetrisHealth.TriggerTopOut();
@@ -588,7 +591,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                     healthProcessor.Health.Value = 0;
                 }
 
-                JudgeNearestHitObject();
+                TriggerNearestHitObjectWithResult(HitResult.Miss);
 
                 if (healthProcessor?.HasFailed == true)
                 {
@@ -597,6 +600,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
 
                 Array.Clear(grid, 0, grid.Length);
+                UpdateDangerState();
             }
         }
 
@@ -928,15 +932,35 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            JudgeNearestHitObject();
-            ClearLines();
+            int linesCleared = ClearLines();
+            UpdateDangerState();
+            JudgePieceLock(linesCleared);
             SpawnNextPiece();
         }
 
-        private void JudgeNearestHitObject()
+        private int GetHighestOccupiedRow()
+        {
+            for (int y = 0; y < Rows; y++)
+            {
+                for (int x = 0; x < Columns; x++)
+                {
+                    if (grid[x, y] != 0)
+                        return y;
+                }
+            }
+            return Rows;
+        }
+
+        private void UpdateDangerState()
+        {
+            // Top 3 rows (rows 0, 1, 2) are the critical danger zone
+            DrawableTetrisHitObject.IsDangerState = isToppedOut || GetHighestOccupiedRow() <= 2;
+        }
+
+        private DrawableTetrisHitObject? FindNearestUnjudgedHitObject(out double minDistance)
         {
             DrawableTetrisHitObject? nearest = null;
-            double minDistance = double.MaxValue;
+            minDistance = double.MaxValue;
 
             foreach (var alive in HitObjectContainer.AliveObjects)
             {
@@ -951,11 +975,59 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            nearest?.TriggerUserHit();
+            return nearest;
         }
 
-        private void ClearLines()
+        private void TriggerNearestHitObjectWithResult(HitResult result)
         {
+            var nearest = FindNearestUnjudgedHitObject(out _);
+            nearest?.TriggerWithResult(result);
+        }
+
+        private void JudgePieceLock(int linesCleared)
+        {
+            var nearest = FindNearestUnjudgedHitObject(out double noteDist);
+            if (nearest == null)
+                return;
+
+            if (DrawableTetrisHitObject.IsDangerState && linesCleared == 0)
+            {
+                nearest.TriggerWithResult(HitResult.Miss);
+                return;
+            }
+
+            if (linesCleared > 0)
+            {
+                nearest.TriggerWithResult(HitResult.Great);
+                return;
+            }
+
+            var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
+            TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
+            double beatLength = Math.Max(timingPoint.BeatLength, 100.0);
+            double relTime = Time.Current - timingPoint.Time;
+            double beatPhase = ((relTime % beatLength) + beatLength) % beatLength;
+            double beatDist = Math.Min(beatPhase, beatLength - beatPhase);
+
+            double effectiveOffset = Math.Min(noteDist, beatDist);
+
+            HitResult result;
+            if (effectiveOffset <= 75)
+                result = HitResult.Great;
+            else if (effectiveOffset <= 125)
+                result = HitResult.Ok;
+            else if (effectiveOffset <= 170)
+                result = HitResult.Meh;
+            else
+                result = HitResult.Miss;
+
+            nearest.TriggerWithResult(result);
+        }
+
+        private int ClearLines()
+        {
+            int cleared = 0;
+
             for (int y = Rows - 1; y >= 0; y--)
             {
                 bool full = true;
@@ -970,6 +1042,8 @@ namespace osu.Game.Rulesets.Tetris.UI
 
                 if (full)
                 {
+                    cleared++;
+
                     for (int pullY = y; pullY > 0; pullY--)
                         for (int x = 0; x < Columns; x++)
                             grid[x, pullY] = grid[x, pullY - 1];
@@ -980,6 +1054,8 @@ namespace osu.Game.Rulesets.Tetris.UI
                     y++;
                 }
             }
+
+            return cleared;
         }
 
         private bool CheckCollision(Vector2I pos, int rot)
