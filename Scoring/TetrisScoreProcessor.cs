@@ -7,6 +7,8 @@ namespace osu.Game.Rulesets.Tetris.Scoring
     {
         public override HitResult MaxResult => HitResult.Great;
         public override HitResult MinResult => HitResult.IgnoreMiss;
+
+        protected override double HealthIncreaseFor(HitResult result) => 0;
     }
 
     public partial class TetrisScoreProcessor : ScoreProcessor

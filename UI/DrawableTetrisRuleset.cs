@@ -11,7 +11,7 @@ using osu.Game.Rulesets.UI;
 
 namespace osu.Game.Rulesets.Tetris.UI
 {
-    public partial class DrawableTetrisRuleset : DrawableRuleset<TetrisHitObject>, IKeyBindingHandler<TetrisAction>
+    public partial class DrawableTetrisRuleset : DrawableRuleset<TetrisHitObject>
     {
         public new TetrisPlayfield Playfield => (TetrisPlayfield)base.Playfield;
 
@@ -26,41 +26,5 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public override DrawableHitObject<TetrisHitObject> CreateDrawableRepresentation(TetrisHitObject h)
             => new DrawableTetrisHitObject(h);
-
-        public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
-        {
-            switch (e.Action)
-            {
-                case TetrisAction.MoveLeft:
-                    Playfield.Move(-1);
-                    return true;
-
-                case TetrisAction.MoveRight:
-                    Playfield.Move(1);
-                    return true;
-
-                case TetrisAction.RotateCW:
-                    Playfield.Rotate(1);
-                    return true;
-
-                case TetrisAction.RotateCCW:
-                    Playfield.Rotate(-1);
-                    return true;
-
-                case TetrisAction.SoftDrop:
-                    Playfield.SoftDrop();
-                    return true;
-
-                case TetrisAction.HardDrop:
-                    Playfield.HardDrop();
-                    return true;
-            }
-
-            return false;
-        }
-
-        public void OnReleased(KeyBindingReleaseEvent<TetrisAction> e)
-        {
-        }
     }
 }

@@ -16,7 +16,7 @@ namespace osu.Game.Rulesets.Tetris.Objects.Drawables
             if (!userTriggered)
             {
                 if (timeOffset > 150)
-                    ApplyResult(HitResult.IgnoreMiss);
+                    ApplyMinResult();
                 return;
             }
 
@@ -29,7 +29,7 @@ namespace osu.Game.Rulesets.Tetris.Objects.Drawables
             else if (absOffset <= 150)
                 ApplyResult(HitResult.Meh);
             else
-                ApplyResult(HitResult.Miss);
+                ApplyMinResult();
         }
 
         public void TriggerUserHit() => UpdateResult(true);

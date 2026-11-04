@@ -5,6 +5,8 @@ using osu.Framework.Bindables;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Containers;
 using osu.Framework.Graphics.Shapes;
+using osu.Framework.Input.Bindings;
+using osu.Framework.Input.Events;
 using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.ControlPoints;
 using osu.Game.Rulesets.Objects.Drawables;
@@ -16,7 +18,7 @@ using osuTK.Graphics;
 
 namespace osu.Game.Rulesets.Tetris.UI
 {
-    public partial class TetrisPlayfield : Playfield
+    public partial class TetrisPlayfield : Playfield, IKeyBindingHandler<TetrisAction>
     {
         public const int Columns = 10;
         public const int Rows = 20;
@@ -155,6 +157,42 @@ namespace osu.Game.Rulesets.Tetris.UI
             SpawnNextPiece();
         }
 
+        public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
+        {
+            switch (e.Action)
+            {
+                case TetrisAction.MoveLeft:
+                    Move(-1);
+                    return true;
+
+                case TetrisAction.MoveRight:
+                    Move(1);
+                    return true;
+
+                case TetrisAction.RotateCW:
+                    Rotate(1);
+                    return true;
+
+                case TetrisAction.RotateCCW:
+                    Rotate(-1);
+                    return true;
+
+                case TetrisAction.SoftDrop:
+                    SoftDrop();
+                    return true;
+
+                case TetrisAction.HardDrop:
+                    HardDrop();
+                    return true;
+            }
+
+            return false;
+        }
+
+        public void OnReleased(KeyBindingReleaseEvent<TetrisAction> e)
+        {
+        }
+
         private void RefillBag()
         {
             var pieces = new List<int> { 1, 2, 3, 4, 5, 6, 7 };
@@ -271,14 +309,23 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private void JudgeNearestHitObject()
         {
+            DrawableTetrisHitObject? nearest = null;
+            double minDistance = double.MaxValue;
+
             foreach (var alive in HitObjectContainer.AliveObjects)
             {
                 if (alive is DrawableTetrisHitObject dho && !dho.Result.HasResult)
                 {
-                    dho.TriggerUserHit();
-                    break;
+                    double dist = Math.Abs(Time.Current - dho.HitObject.StartTime);
+                    if (dist < minDistance)
+                    {
+                        minDistance = dist;
+                        nearest = dho;
+                    }
                 }
             }
+
+            nearest?.TriggerUserHit();
         }
 
         private void ClearLines()
