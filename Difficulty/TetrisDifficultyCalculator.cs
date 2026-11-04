@@ -12,7 +12,7 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
 {
     public class TetrisDifficultyCalculator : DifficultyCalculator
     {
-        public override int Version => 3;
+        public override int Version => 4;
 
         public TetrisDifficultyCalculator(IRulesetInfo ruleset, IWorkingBeatmap beatmap)
             : base(ruleset, beatmap)
@@ -48,8 +48,8 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
                 npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
             }
 
-            // Effective steps per minute reflects actual piece fall speed (1.5x base * npsScale)
-            double effectiveStepsPerMinute = bpm * 1.5 * npsScale;
+            // Effective steps per minute reflects actual piece fall speed (1.7x base * npsScale)
+            double effectiveStepsPerMinute = bpm * 1.7 * npsScale;
             double starRating = effectiveStepsPerMinute / 90.0;
 
             if (mods.Any(m => m is ModHidden))

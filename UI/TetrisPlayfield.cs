@@ -715,7 +715,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
             }
 
-            densityGravityMultiplier = 1.5 * npsScale;
+            densityGravityMultiplier = 1.7 * npsScale;
         }
 
         protected override void Update()
@@ -784,13 +784,35 @@ namespace osu.Game.Rulesets.Tetris.UI
             }
         }
 
+        private static readonly Vector2I[] WallKickOffsets = new[]
+        {
+            new Vector2I(0, 0),
+            new Vector2I(1, 0),
+            new Vector2I(-1, 0),
+            new Vector2I(2, 0),
+            new Vector2I(-2, 0),
+            new Vector2I(0, -1),
+            new Vector2I(1, -1),
+            new Vector2I(-1, -1),
+            new Vector2I(0, 1),
+            new Vector2I(1, 1),
+            new Vector2I(-1, 1),
+            new Vector2I(0, -2)
+        };
+
         public void Rotate(int dir)
         {
             int nextRot = (currentRotation + dir + 4) % 4;
-            if (!CheckCollision(piecePos, nextRot))
+            foreach (var kick in WallKickOffsets)
             {
-                currentRotation = nextRot;
-                RedrawGrid();
+                var candidate = new Vector2I(piecePos.X + kick.X, piecePos.Y + kick.Y);
+                if (!CheckCollision(candidate, nextRot))
+                {
+                    piecePos = candidate;
+                    currentRotation = nextRot;
+                    RedrawGrid();
+                    return;
+                }
             }
         }
 
