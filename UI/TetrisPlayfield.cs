@@ -10,8 +10,10 @@ using osu.Framework.Input.Events;
 using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.ControlPoints;
 using osu.Game.Rulesets.Objects.Drawables;
+using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Tetris.Objects;
 using osu.Game.Rulesets.Tetris.Objects.Drawables;
+using osu.Game.Rulesets.Tetris.Scoring;
 using osu.Game.Rulesets.UI;
 using osuTK;
 using osuTK.Graphics;
@@ -27,7 +29,14 @@ namespace osu.Game.Rulesets.Tetris.UI
         [Resolved(CanBeNull = true)]
         private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
 
+        [Resolved(CanBeNull = true)]
+        private HealthProcessor? healthProcessor { get; set; }
+
         public IBeatmap? Beatmap { get; set; }
+
+        public bool IsHidden { get; set; }
+
+        private bool isToppedOut;
 
         private readonly Container boardContainer;
         private readonly Container blockContainer;
@@ -159,6 +168,9 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
         {
+            if (isToppedOut)
+                return false;
+
             switch (e.Action)
             {
                 case TetrisAction.MoveLeft:
@@ -215,6 +227,25 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             if (CheckCollision(piecePos, currentRotation))
             {
+                if (healthProcessor is TetrisHealthProcessor tetrisHealth)
+                {
+                    tetrisHealth.TriggerTopOut();
+                }
+                else if (healthProcessor != null)
+                {
+                    healthProcessor.Health.Value = 0;
+                }
+
+                // Trigger a judgement so HealthProcessor evaluates its fail conditions immediately.
+                // If NoFail is active, clear the board so the player can keep playing; otherwise stop.
+                JudgeNearestHitObject();
+
+                if (healthProcessor?.HasFailed == true)
+                {
+                    isToppedOut = true;
+                    return;
+                }
+
                 Array.Clear(grid, 0, grid.Length);
             }
 
@@ -224,6 +255,9 @@ namespace osu.Game.Rulesets.Tetris.UI
         protected override void Update()
         {
             base.Update();
+
+            if (isToppedOut)
+                return;
 
             var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
@@ -385,7 +419,14 @@ namespace osu.Game.Rulesets.Tetris.UI
                 {
                     int val = grid[x, y];
                     visualGrid[x, y].Colour = PieceColors[val];
-                    visualGrid[x, y].Alpha = val == 0 ? 0.1f : 1f;
+                    if (val == 0)
+                    {
+                        visualGrid[x, y].Alpha = 0.1f;
+                    }
+                    else
+                    {
+                        visualGrid[x, y].Alpha = IsHidden ? 0.08f : 1f;
+                    }
                 }
             }
 

@@ -24,4 +24,23 @@ namespace osu.Game.Rulesets.Tetris.Scoring
         {
         }
     }
+
+    public partial class TetrisHealthProcessor : AccumulatingHealthProcessor
+    {
+        public bool TopOutTriggered { get; private set; }
+
+        public TetrisHealthProcessor()
+            : base(1)
+        {
+        }
+
+        public void TriggerTopOut()
+        {
+            TopOutTriggered = true;
+            Health.Value = 0;
+        }
+
+        protected override bool CheckDefaultFailCondition(JudgementResult result)
+            => TopOutTriggered || base.CheckDefaultFailCondition(result);
+    }
 }

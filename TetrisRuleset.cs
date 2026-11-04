@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using osu.Framework.Graphics;
 using osu.Framework.Graphics.Sprites;
@@ -8,6 +9,7 @@ using osu.Game.Rulesets.Mods;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Tetris.Beatmaps;
 using osu.Game.Rulesets.Tetris.Difficulty;
+using osu.Game.Rulesets.Tetris.Mods;
 using osu.Game.Rulesets.Tetris.Scoring;
 using osu.Game.Rulesets.Tetris.UI;
 using osu.Game.Rulesets.UI;
@@ -32,7 +34,32 @@ namespace osu.Game.Rulesets.Tetris
         public override ScoreProcessor CreateScoreProcessor()
             => new TetrisScoreProcessor(this);
 
-        public override IEnumerable<Mod> GetModsFor(ModType type) => System.Array.Empty<Mod>();
+        public override HealthProcessor CreateHealthProcessor(double drainStartTime)
+            => new TetrisHealthProcessor();
+
+        public override IEnumerable<Mod> GetModsFor(ModType type)
+        {
+            switch (type)
+            {
+                case ModType.DifficultyReduction:
+                    return new Mod[]
+                    {
+                        new TetrisModNoFail(),
+                        new MultiMod(new TetrisModHalfTime(), new TetrisModDaycore()),
+                    };
+
+                case ModType.DifficultyIncrease:
+                    return new Mod[]
+                    {
+                        new MultiMod(new TetrisModSuddenDeath(), new TetrisModPerfect()),
+                        new MultiMod(new TetrisModDoubleTime(), new TetrisModNightcore()),
+                        new TetrisModHidden(),
+                    };
+
+                default:
+                    return Array.Empty<Mod>();
+            }
+        }
 
         public override IEnumerable<KeyBinding> GetDefaultKeyBindings(int variant = 0) => new[]
         {
