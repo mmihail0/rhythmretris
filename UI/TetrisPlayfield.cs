@@ -423,10 +423,23 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         protected override bool OnKeyDown(KeyDownEvent e)
         {
-            if (!isToppedOut && !e.Repeat && (e.Key == Key.ShiftLeft || e.Key == Key.ShiftRight))
+            if (isToppedOut)
+                return false;
+
+            if (!e.Repeat)
             {
-                HoldPiece();
-                return true;
+                if (e.Key == Key.ShiftLeft || e.Key == Key.ShiftRight || e.Key == Key.C)
+                {
+                    HoldPiece();
+                    return true;
+                }
+
+                if (e.Key == Key.Space)
+                {
+                    if (Time.Current >= 0)
+                        HardDrop();
+                    return true;
+                }
             }
 
             return base.OnKeyDown(e);
@@ -754,7 +767,7 @@ namespace osu.Game.Rulesets.Tetris.UI
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
             double stepInterval = timingPoint.BeatLength / densityGravityMultiplier;
 
-            if (Time.Current - lastDropTime >= stepInterval)
+            if (Time.Current >= 0 && Time.Current - lastDropTime >= stepInterval)
             {
                 StepGravity();
                 lastDropTime = Time.Current;
