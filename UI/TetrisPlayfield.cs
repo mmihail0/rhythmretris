@@ -574,7 +574,8 @@ namespace osu.Game.Rulesets.Tetris.UI
             lockDelayTimer = 0;
             lockResetCount = 0;
             lowestRowReached = 0;
-            lastDropTime = Time.Current;
+            if (Clock != null)
+                lastDropTime = Time.Current;
 
             if (CheckCollision(piecePos, currentRotation))
             {
