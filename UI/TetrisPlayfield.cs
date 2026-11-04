@@ -33,6 +33,8 @@ namespace osu.Game.Rulesets.Tetris.UI
         private const double das_delay = 135.0;
         private const double arr_interval = 28.0;
         private const double soft_drop_interval = 35.0;
+        private const double lock_delay_duration = 500.0;
+        private const int max_lock_resets = 15;
 
         [Resolved(CanBeNull = true)]
         private IBindable<WorkingBeatmap>? workingBeatmap { get; set; }
@@ -79,6 +81,9 @@ namespace osu.Game.Rulesets.Tetris.UI
         private double softDropTimer;
 
         private double lastDropTime = double.MinValue;
+        private double lockDelayTimer;
+        private int lockResetCount;
+        private int lowestRowReached;
 
         private static readonly int[][][,] Tetrominoes = new int[][][,]
         {
@@ -566,6 +571,10 @@ namespace osu.Game.Rulesets.Tetris.UI
         {
             currentRotation = 0;
             piecePos = new Vector2I(3, 0);
+            lockDelayTimer = 0;
+            lockResetCount = 0;
+            lowestRowReached = 0;
+            lastDropTime = Time.Current;
 
             if (CheckCollision(piecePos, currentRotation))
             {
@@ -753,6 +762,12 @@ namespace osu.Game.Rulesets.Tetris.UI
                     if (!CheckCollision(nextPos, currentRotation))
                     {
                         piecePos = nextPos;
+                        if (piecePos.Y > lowestRowReached)
+                        {
+                            lowestRowReached = piecePos.Y;
+                            lockResetCount = 0;
+                        }
+                        lockDelayTimer = 0;
                         lastDropTime = Time.Current;
                         RedrawGrid();
                     }
@@ -767,10 +782,44 @@ namespace osu.Game.Rulesets.Tetris.UI
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
             double stepInterval = timingPoint.BeatLength / densityGravityMultiplier;
 
-            if (Time.Current >= 0 && Time.Current - lastDropTime >= stepInterval)
+            if (Time.Current >= 0)
             {
-                StepGravity();
-                lastDropTime = Time.Current;
+                if (IsPieceGrounded())
+                {
+                    lockDelayTimer += dt;
+                    if (lockDelayTimer >= lock_delay_duration)
+                    {
+                        LockPiece();
+                        lastDropTime = Time.Current;
+                    }
+                }
+                else
+                {
+                    lockDelayTimer = 0;
+                    if (Time.Current - lastDropTime >= stepInterval)
+                    {
+                        StepGravity();
+                        lastDropTime = Time.Current;
+                    }
+                }
+            }
+        }
+
+        private bool IsPieceGrounded()
+            => CheckCollision(new Vector2I(piecePos.X, piecePos.Y + 1), currentRotation);
+
+        private void OnPieceManipulated()
+        {
+            if (piecePos.Y > lowestRowReached)
+            {
+                lowestRowReached = piecePos.Y;
+                lockResetCount = 0;
+                lockDelayTimer = 0;
+            }
+            else if (lockResetCount < max_lock_resets)
+            {
+                lockResetCount++;
+                lockDelayTimer = 0;
             }
         }
 
@@ -780,6 +829,7 @@ namespace osu.Game.Rulesets.Tetris.UI
             if (!CheckCollision(target, currentRotation))
             {
                 piecePos = target;
+                OnPieceManipulated();
                 RedrawGrid();
             }
         }
@@ -810,6 +860,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 {
                     piecePos = candidate;
                     currentRotation = nextRot;
+                    OnPieceManipulated();
                     RedrawGrid();
                     return;
                 }
@@ -818,7 +869,19 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public void SoftDrop()
         {
-            StepGravity();
+            var target = new Vector2I(piecePos.X, piecePos.Y + 1);
+            if (!CheckCollision(target, currentRotation))
+            {
+                piecePos = target;
+                if (piecePos.Y > lowestRowReached)
+                {
+                    lowestRowReached = piecePos.Y;
+                    lockResetCount = 0;
+                }
+                lockDelayTimer = 0;
+                lastDropTime = Time.Current;
+                RedrawGrid();
+            }
         }
 
         public void HardDrop()
@@ -835,11 +898,13 @@ namespace osu.Game.Rulesets.Tetris.UI
             if (!CheckCollision(target, currentRotation))
             {
                 piecePos = target;
+                if (piecePos.Y > lowestRowReached)
+                {
+                    lowestRowReached = piecePos.Y;
+                    lockResetCount = 0;
+                }
+                lockDelayTimer = 0;
                 RedrawGrid();
-            }
-            else
-            {
-                LockPiece();
             }
         }
 
