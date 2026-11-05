@@ -30,8 +30,8 @@ namespace osu.Game.Rulesets.Tetris.UI
         public const float CellSize = 24f;
         public const float FrameThickness = 3f;
 
-        private const double das_delay = 135.0;
-        private const double arr_interval = 28.0;
+        private const double das_delay = 165.0;
+        private const double arr_interval = 42.0;
         private const double soft_drop_interval = 35.0;
         private const double lock_delay_duration = 500.0;
         private const int max_lock_resets = 15;
@@ -741,7 +741,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 npsScale = 1.0 + Math.Clamp(baseNps * 0.12, 0.05, 1.5);
             }
 
-            densityGravityMultiplier = 1.7 * npsScale;
+            densityGravityMultiplier = 1.9 * npsScale;
         }
 
         private double GetDynamicGravityMultiplier(double currentTime, ControlPointInfo? controlPointInfo)
