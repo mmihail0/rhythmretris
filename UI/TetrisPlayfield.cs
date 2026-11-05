@@ -48,6 +48,9 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private bool isToppedOut;
         private double densityGravityMultiplier = 1.0;
+        private double baseNps = 2.0;
+        private double[] noteTimes = Array.Empty<double>();
+        private int lastProcessedNoteIndex = -1;
         private bool multiplierCalculated;
 
         private readonly Container boardContainer;
@@ -721,15 +724,129 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             multiplierCalculated = true;
 
-            double npsScale = 1.0;
-            if (activeBeatmap.HitObjects.Count > 1)
+            int count = activeBeatmap.HitObjects.Count;
+            if (count > 0)
             {
-                double durationSeconds = Math.Max((activeBeatmap.HitObjects[^1].StartTime - activeBeatmap.HitObjects[0].StartTime) / 1000.0, 10.0);
-                double nps = activeBeatmap.HitObjects.Count / durationSeconds;
-                npsScale = 1.0 + Math.Clamp(nps * 0.12, 0.05, 1.5);
+                noteTimes = new double[count];
+                for (int i = 0; i < count; i++)
+                    noteTimes[i] = activeBeatmap.HitObjects[i].StartTime;
+                Array.Sort(noteTimes);
+            }
+
+            double npsScale = 1.0;
+            if (noteTimes.Length > 1)
+            {
+                double durationSeconds = Math.Max((noteTimes[^1] - noteTimes[0]) / 1000.0, 10.0);
+                baseNps = noteTimes.Length / durationSeconds;
+                npsScale = 1.0 + Math.Clamp(baseNps * 0.12, 0.05, 1.5);
             }
 
             densityGravityMultiplier = 1.7 * npsScale;
+        }
+
+        private double GetDynamicGravityMultiplier(double currentTime, ControlPointInfo? controlPointInfo)
+        {
+            if (noteTimes.Length == 0)
+                return densityGravityMultiplier;
+
+            // Pre-first-note intro: start calm and ramp up toward the first note
+            if (currentTime < noteTimes[0])
+            {
+                double timeUntilFirst = noteTimes[0] - currentTime;
+                double introFactor = 0.40 + 0.45 * (1.0 - Math.Clamp(timeUntilFirst / 2000.0, 0.0, 1.0));
+                return densityGravityMultiplier * introFactor;
+            }
+
+            // Post-final-note outro: coast to a gentle crawl once the chart finishes
+            if (currentTime >= noteTimes[^1])
+            {
+                double timeSinceLast = currentTime - noteTimes[^1];
+                double postOutroFactor = 0.40 - 0.25 * Math.Clamp(timeSinceLast / 1200.0, 0.0, 1.0);
+                return densityGravityMultiplier * postOutroFactor;
+            }
+
+            int search = Array.BinarySearch(noteTimes, currentTime);
+            int nextIdx = search >= 0 ? search : ~search;
+
+            double prevTime = nextIdx > 0 ? noteTimes[nextIdx - 1] : noteTimes[0];
+            double nextTime = nextIdx < noteTimes.Length ? noteTimes[nextIdx] : noteTimes[^1];
+            double gapMs = Math.Max(nextTime - prevTime, 50.0);
+
+            double sectionScale;
+
+            // Break / long gap detection (>= 1.6s between notes)
+            if (gapMs >= 1600.0)
+            {
+                double timeUntilNext = nextTime - currentTime;
+                if (timeUntilNext > 600.0)
+                {
+                    sectionScale = 0.35;
+                }
+                else
+                {
+                    // Ramp back up over the final 600ms before the next section begins
+                    sectionScale = 0.35 + 0.55 * (1.0 - Math.Clamp(timeUntilNext / 600.0, 0.0, 1.0));
+                }
+            }
+            else
+            {
+                // Local note density in a 2-second rolling window around currentTime
+                int winStart = Array.BinarySearch(noteTimes, currentTime - 700.0);
+                if (winStart < 0) winStart = ~winStart;
+
+                int winEnd = Array.BinarySearch(noteTimes, currentTime + 1300.0);
+                if (winEnd < 0) winEnd = ~winEnd;
+
+                double windowNps = Math.Max(winEnd - winStart, 0) / 2.0;
+                double instantNps = 1000.0 / Math.Clamp(gapMs, 65.0, 2000.0);
+                double localNps = windowNps * 0.65 + instantNps * 0.35;
+
+                double intensityRatio = localNps / Math.Max(baseNps, 0.8);
+                sectionScale = Math.Clamp(0.42 + 0.58 * Math.Pow(intensityRatio, 1.15), 0.42, 1.85);
+            }
+
+            // Boost intensity during Kiai chorus/climax sections
+            bool isKiai = controlPointInfo?.EffectPointAt(currentTime).KiaiMode ?? false;
+            if (isKiai)
+                sectionScale *= 1.22;
+
+            // End-of-song wind-down: let the player feel the beatmap concluding over the final 7 seconds / 10 notes
+            double timeRemaining = noteTimes[^1] - currentTime;
+            int notesRemaining = noteTimes.Length - nextIdx;
+            double outroFactor = 1.0;
+
+            if (timeRemaining <= 7000.0)
+            {
+                double t = Math.Clamp(timeRemaining / 7000.0, 0.0, 1.0);
+                outroFactor = Math.Min(outroFactor, 0.42 + 0.58 * t);
+            }
+
+            if (notesRemaining <= 10)
+            {
+                double n = Math.Clamp(notesRemaining / 10.0, 0.0, 1.0);
+                outroFactor = Math.Min(outroFactor, 0.38 + 0.62 * n);
+            }
+
+            sectionScale *= outroFactor;
+
+            return densityGravityMultiplier * sectionScale;
+        }
+
+        private bool CheckNoteRhythmPulse(double currentTime)
+        {
+            if (noteTimes.Length == 0)
+                return false;
+
+            int search = Array.BinarySearch(noteTimes, currentTime);
+            int latestPassedIdx = search >= 0 ? search : (~search) - 1;
+
+            if (latestPassedIdx > lastProcessedNoteIndex && latestPassedIdx >= 0)
+            {
+                lastProcessedNoteIndex = latestPassedIdx;
+                return Math.Abs(currentTime - noteTimes[latestPassedIdx]) <= 45.0;
+            }
+
+            return false;
         }
 
         protected override void Update()
@@ -785,7 +902,9 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
             TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
-            double stepInterval = timingPoint.BeatLength / densityGravityMultiplier;
+            double dynamicMultiplier = GetDynamicGravityMultiplier(Time.Current, controlPointInfo);
+            double stepInterval = timingPoint.BeatLength / Math.Max(dynamicMultiplier, 0.15);
+            bool notePulse = CheckNoteRhythmPulse(Time.Current);
 
             if (Time.Current >= 0)
             {
@@ -801,7 +920,11 @@ namespace osu.Game.Rulesets.Tetris.UI
                 else
                 {
                     lockDelayTimer = 0;
-                    if (Time.Current - lastDropTime >= stepInterval)
+                    bool shouldStepOnNote = notePulse
+                        && dynamicMultiplier >= densityGravityMultiplier * 1.05
+                        && (Time.Current - lastDropTime) >= stepInterval * 0.55;
+
+                    if (shouldStepOnNote || Time.Current - lastDropTime >= stepInterval)
                     {
                         StepGravity();
                         lastDropTime = Time.Current;
