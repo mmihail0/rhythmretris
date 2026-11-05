@@ -47,6 +47,8 @@ namespace osu.Game.Rulesets.Tetris.UI
         public bool IsHidden { get; set; }
 
         private bool isToppedOut;
+        private bool isQueueDepleting;
+        private bool isSongFinished;
         private double densityGravityMultiplier = 1.0;
         private double baseNps = 2.0;
         private double[] noteTimes = Array.Empty<double>();
@@ -58,6 +60,7 @@ namespace osu.Game.Rulesets.Tetris.UI
         private readonly Container ghostContainer;
         private readonly Container blockContainer;
         private readonly Container holdPieceContainer;
+        private readonly Box progressBarFill;
         private readonly Container[] nextPieceContainers = new Container[5];
 
         private readonly Container[,] visualGrid = new Container[Columns, Rows];
@@ -159,9 +162,11 @@ namespace osu.Game.Rulesets.Tetris.UI
             Anchor = Anchor.Centre;
             Origin = Anchor.Centre;
             DrawableTetrisHitObject.IsDangerState = false;
+            DrawableTetrisHitObject.PendingLockResult = null;
 
             float boardWidth = Columns * CellSize;
             float boardHeight = Rows * CellSize;
+            float meterWidth = 10f;
             float panelWidth = 116f;
             float headerHeight = 22f;
             float holdBodyHeight = 76f;
@@ -227,11 +232,60 @@ namespace osu.Game.Rulesets.Tetris.UI
                         },
 
                         // ==========================================
+                        // LEFT VERTICAL PROGRESS METER BAR (TETR.IO slot)
+                        // ==========================================
+                        new Container
+                        {
+                            Position = new Vector2(-FrameThickness - meterWidth, 0),
+                            Size = new Vector2(meterWidth, boardHeight + FrameThickness),
+                            Children = new Drawable[]
+                            {
+                                new Box
+                                {
+                                    Position = new Vector2(FrameThickness, 0),
+                                    Size = new Vector2(meterWidth - FrameThickness, boardHeight),
+                                    Colour = Color4.Black,
+                                    Alpha = 0.85f
+                                },
+                                new Box
+                                {
+                                    Position = new Vector2(FrameThickness, 0),
+                                    Size = new Vector2(meterWidth - FrameThickness, boardHeight),
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.TopLeft,
+                                    Alpha = 0f
+                                },
+                                progressBarFill = new Box
+                                {
+                                    Position = new Vector2(FrameThickness, boardHeight),
+                                    Anchor = Anchor.TopLeft,
+                                    Origin = Anchor.BottomLeft,
+                                    Size = new Vector2(meterWidth - FrameThickness, 0f),
+                                    Colour = new Color4(220, 240, 255, 235)
+                                },
+                                // Meter Left White Border
+                                new Box
+                                {
+                                    Position = new Vector2(0, 0),
+                                    Size = new Vector2(FrameThickness, boardHeight + FrameThickness),
+                                    Colour = Color4.White
+                                },
+                                // Meter Bottom White Border
+                                new Box
+                                {
+                                    Position = new Vector2(0, boardHeight),
+                                    Size = new Vector2(meterWidth, FrameThickness),
+                                    Colour = Color4.White
+                                }
+                            }
+                        },
+
+                        // ==========================================
                         // HOLD PANEL (Top-Left, TETR.IO style)
                         // ==========================================
                         new Container
                         {
-                            Position = new Vector2(-FrameThickness - panelWidth, 0),
+                            Position = new Vector2(-FrameThickness - meterWidth - panelWidth, 0),
                             Size = new Vector2(panelWidth, headerHeight + holdBodyHeight),
                             Children = new Drawable[]
                             {
@@ -432,7 +486,7 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         protected override bool OnKeyDown(KeyDownEvent e)
         {
-            if (isToppedOut)
+            if (isToppedOut || isSongFinished || currentPiece <= 0)
                 return false;
 
             if (!e.Repeat)
@@ -456,7 +510,7 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public bool OnPressed(KeyBindingPressEvent<TetrisAction> e)
         {
-            if (isToppedOut)
+            if (isToppedOut || isSongFinished || currentPiece <= 0)
                 return false;
 
             switch (e.Action)
@@ -554,13 +608,31 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private void EnsureBagHasPieces(int minCount = 7)
         {
+            if (isQueueDepleting || isSongFinished)
+                return;
+
             while (bag.Count < minCount)
                 RefillBag();
         }
 
         private void SpawnNextPiece()
         {
+            if (isSongFinished)
+                return;
+
             EnsureBagHasPieces(7);
+
+            bool pastLastNote = Clock != null && noteTimes.Length > 0 && Time.Current >= noteTimes[^1];
+            if (bag.Count == 0 || pastLastNote)
+            {
+                isSongFinished = true;
+                currentPiece = 0;
+                bag.Clear();
+                UpdateQueuePreviews();
+                RedrawGrid();
+                return;
+            }
+
             currentPiece = bag[0];
             bag.RemoveAt(0);
             EnsureBagHasPieces(7);
@@ -609,7 +681,10 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public void HoldPiece()
         {
-            if (!canHold || isToppedOut)
+            if (!canHold || isToppedOut || isSongFinished || currentPiece <= 0)
+                return;
+
+            if (heldPiece == 0 && bag.Count == 0 && isQueueDepleting)
                 return;
 
             canHold = false;
@@ -618,6 +693,14 @@ namespace osu.Game.Rulesets.Tetris.UI
             {
                 heldPiece = currentPiece;
                 EnsureBagHasPieces(7);
+                if (bag.Count == 0)
+                {
+                    isSongFinished = true;
+                    currentPiece = 0;
+                    UpdateQueuePreviews();
+                    RedrawGrid();
+                    return;
+                }
                 currentPiece = bag[0];
                 bag.RemoveAt(0);
                 EnsureBagHasPieces(7);
@@ -832,21 +915,56 @@ namespace osu.Game.Rulesets.Tetris.UI
             return densityGravityMultiplier * sectionScale;
         }
 
-        private bool CheckNoteRhythmPulse(double currentTime)
+        private void UpdateProgressBar(double currentTime, ControlPointInfo? controlPointInfo)
         {
             if (noteTimes.Length == 0)
-                return false;
+            {
+                progressBarFill.Height = 0f;
+                return;
+            }
+
+            double startTime = Math.Min(0.0, noteTimes[0]);
+            double endTime = Math.Max(noteTimes[^1], startTime + 1.0);
+            double progress = Math.Clamp((currentTime - startTime) / (endTime - startTime), 0.0, 1.0);
+
+            progressBarFill.Height = (float)(progress * (Rows * CellSize));
+
+            bool isKiai = controlPointInfo?.EffectPointAt(currentTime).KiaiMode ?? false;
+            if (isQueueDepleting || isSongFinished)
+                progressBarFill.Colour = new Color4(65, 240, 190, 255);
+            else if (isKiai)
+                progressBarFill.Colour = new Color4(255, 195, 70, 255);
+            else
+                progressBarFill.Colour = new Color4(220, 240, 255, 235);
+        }
+
+        private int ConsumeNoteGravitySteps(double currentTime, TimingControlPoint timingPoint)
+        {
+            if (noteTimes.Length == 0)
+                return 0;
 
             int search = Array.BinarySearch(noteTimes, currentTime);
             int latestPassedIdx = search >= 0 ? search : (~search) - 1;
 
-            if (latestPassedIdx > lastProcessedNoteIndex && latestPassedIdx >= 0)
+            if (lastProcessedNoteIndex == -1)
             {
                 lastProcessedNoteIndex = latestPassedIdx;
-                return Math.Abs(currentTime - noteTimes[latestPassedIdx]) <= 45.0;
+                return latestPassedIdx >= 0 && Math.Abs(currentTime - noteTimes[latestPassedIdx]) <= 50.0 ? 1 : 0;
             }
 
-            return false;
+            if (latestPassedIdx > lastProcessedNoteIndex && latestPassedIdx >= 0)
+            {
+                int prevIdx = lastProcessedNoteIndex;
+                int crossedCount = latestPassedIdx - lastProcessedNoteIndex;
+                lastProcessedNoteIndex = latestPassedIdx;
+
+                // Pure Note-Stepped Gravity: step on each beatmap note hit, with an extra step on wide beat gaps scaled by 1.9x difficulty
+                double gapSincePrev = prevIdx >= 0 ? noteTimes[latestPassedIdx] - noteTimes[prevIdx] : timingPoint.BeatLength;
+                int bonusStep = gapSincePrev >= timingPoint.BeatLength * 0.85 ? 1 : 0;
+                return Math.Clamp(crossedCount + bonusStep, 1, 3);
+            }
+
+            return 0;
         }
 
         protected override void Update()
@@ -857,6 +975,40 @@ namespace osu.Game.Rulesets.Tetris.UI
                 return;
 
             EnsureDifficultyMultiplier();
+
+            var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
+            TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
+
+            if (noteTimes.Length > 0 && !isQueueDepleting)
+            {
+                double timeRemaining = noteTimes[^1] - Time.Current;
+                int search = Array.BinarySearch(noteTimes, Time.Current);
+                int nextIdx = search >= 0 ? search : ~search;
+                int notesRemaining = noteTimes.Length - nextIdx;
+
+                if (timeRemaining <= 7500.0 || notesRemaining <= 12)
+                {
+                    isQueueDepleting = true;
+                    if (bag.Count > 5)
+                        bag.RemoveRange(5, bag.Count - 5);
+                    UpdateQueuePreviews();
+                }
+            }
+
+            UpdateProgressBar(Time.Current, controlPointInfo);
+
+            if (isSongFinished || currentPiece <= 0)
+                return;
+
+            if (noteTimes.Length > 0 && Time.Current > noteTimes[^1] + 350.0)
+            {
+                isSongFinished = true;
+                currentPiece = 0;
+                bag.Clear();
+                UpdateQueuePreviews();
+                RedrawGrid();
+                return;
+            }
 
             double dt = Math.Max(Time.Elapsed, 0);
 
@@ -900,11 +1052,7 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
-            TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
-            double dynamicMultiplier = GetDynamicGravityMultiplier(Time.Current, controlPointInfo);
-            double stepInterval = timingPoint.BeatLength / Math.Max(dynamicMultiplier, 0.15);
-            bool notePulse = CheckNoteRhythmPulse(Time.Current);
+            int noteSteps = ConsumeNoteGravitySteps(Time.Current, timingPoint);
 
             if (Time.Current >= 0)
             {
@@ -920,14 +1068,26 @@ namespace osu.Game.Rulesets.Tetris.UI
                 else
                 {
                     lockDelayTimer = 0;
-                    bool shouldStepOnNote = notePulse
-                        && dynamicMultiplier >= densityGravityMultiplier * 1.05
-                        && (Time.Current - lastDropTime) >= stepInterval * 0.55;
-
-                    if (shouldStepOnNote || Time.Current - lastDropTime >= stepInterval)
+                    if (noteTimes.Length > 0)
                     {
-                        StepGravity();
-                        lastDropTime = Time.Current;
+                        // Solution 1.3: Pure Note-Stepped Gravity — pieces step down when beatmap HitObjects trigger
+                        if (noteSteps > 0 && (Time.Current - lastDropTime) >= 35.0)
+                        {
+                            for (int i = 0; i < noteSteps && !IsPieceGrounded(); i++)
+                                StepGravity();
+
+                            lastDropTime = Time.Current;
+                        }
+                    }
+                    else
+                    {
+                        double dynamicMultiplier = GetDynamicGravityMultiplier(Time.Current, controlPointInfo);
+                        double stepInterval = timingPoint.BeatLength / Math.Max(dynamicMultiplier, 0.15);
+                        if (Time.Current - lastDropTime >= stepInterval)
+                        {
+                            StepGravity();
+                            lastDropTime = Time.Current;
+                        }
                     }
                 }
             }
@@ -1038,8 +1198,14 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private void LockPiece()
         {
+            if (isSongFinished || currentPiece <= 0)
+                return;
+
             var shape = Tetrominoes[currentPiece][currentRotation];
             int size = shape.GetLength(0);
+
+            Span<int> lowestPieceRowInCol = stackalloc int[Columns];
+            lowestPieceRowInCol.Fill(-1);
 
             for (int r = 0; r < size; r++)
             {
@@ -1050,14 +1216,27 @@ namespace osu.Game.Rulesets.Tetris.UI
                         int gx = piecePos.X + c;
                         int gy = piecePos.Y + r;
                         if (gx >= 0 && gx < Columns && gy >= 0 && gy < Rows)
+                        {
                             grid[gx, gy] = currentPiece;
+                            if (gy > lowestPieceRowInCol[gx])
+                                lowestPieceRowInCol[gx] = gy;
+                        }
                     }
                 }
             }
 
+            // Option A: Count newly buried empty holes directly underneath the locked piece
+            int holesCreated = 0;
+            for (int gx = 0; gx < Columns; gx++)
+            {
+                int bottomY = lowestPieceRowInCol[gx];
+                if (bottomY >= 0 && bottomY + 1 < Rows && grid[gx, bottomY + 1] == 0)
+                    holesCreated++;
+            }
+
             int linesCleared = ClearLines();
             UpdateDangerState();
-            JudgePieceLock(linesCleared);
+            JudgePieceLock(linesCleared, holesCreated);
             SpawnNextPiece();
         }
 
@@ -1107,44 +1286,40 @@ namespace osu.Game.Rulesets.Tetris.UI
             nearest?.TriggerWithResult(result);
         }
 
-        private void JudgePieceLock(int linesCleared)
+        private void JudgePieceLock(int linesCleared, int holesCreated)
         {
-            var nearest = FindNearestUnjudgedHitObject(out double noteDist);
-            if (nearest == null)
-                return;
-
-            if (DrawableTetrisHitObject.IsDangerState && linesCleared == 0)
-            {
-                nearest.TriggerWithResult(HitResult.Miss);
-                return;
-            }
+            HitResult result;
 
             if (linesCleared > 0)
             {
-                nearest.TriggerWithResult(HitResult.Great);
-                return;
+                result = HitResult.Great;
+            }
+            else if (DrawableTetrisHitObject.IsDangerState)
+            {
+                result = (holesCreated > 0 || GetHighestOccupiedRow() <= 1) ? HitResult.Miss : HitResult.Ok;
+            }
+            else if (holesCreated == 0)
+            {
+                result = HitResult.Great;
+            }
+            else if (holesCreated == 1)
+            {
+                result = HitResult.Ok;
+            }
+            else
+            {
+                result = HitResult.Meh;
             }
 
-            var controlPointInfo = Beatmap?.ControlPointInfo ?? workingBeatmap?.Value?.Beatmap?.ControlPointInfo;
-            TimingControlPoint timingPoint = controlPointInfo?.TimingPointAt(Time.Current) ?? TimingControlPoint.DEFAULT;
-            double beatLength = Math.Max(timingPoint.BeatLength, 100.0);
-            double relTime = Time.Current - timingPoint.Time;
-            double beatPhase = ((relTime % beatLength) + beatLength) % beatLength;
-            double beatDist = Math.Min(beatPhase, beatLength - beatPhase);
-
-            double effectiveOffset = Math.Min(noteDist, beatDist);
-
-            HitResult result;
-            if (effectiveOffset <= 75)
-                result = HitResult.Great;
-            else if (effectiveOffset <= 125)
-                result = HitResult.Ok;
-            else if (effectiveOffset <= 170)
-                result = HitResult.Meh;
-            else
-                result = HitResult.Miss;
-
-            nearest.TriggerWithResult(result);
+            var nearest = FindNearestUnjudgedHitObject(out double noteDist);
+            if (nearest != null && noteDist <= 250.0)
+            {
+                nearest.TriggerWithResult(result);
+            }
+            else if (result != HitResult.Great)
+            {
+                DrawableTetrisHitObject.PendingLockResult = result;
+            }
         }
 
         private int ClearLines()
@@ -1183,6 +1358,9 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private bool CheckCollision(Vector2I pos, int rot)
         {
+            if (currentPiece <= 0 || currentPiece >= Tetrominoes.Length)
+                return true;
+
             var shape = Tetrominoes[currentPiece][rot];
             int size = shape.GetLength(0);
 
@@ -1281,11 +1459,14 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
+            ghostContainer.Clear();
+            if (isSongFinished || currentPiece <= 0 || currentPiece >= Tetrominoes.Length)
+                return;
+
             var shape = Tetrominoes[currentPiece][currentRotation];
             int size = shape.GetLength(0);
 
             // Render TETR.IO hollowed-out ghost piece at landing position
-            ghostContainer.Clear();
             var ghostPos = GetGhostPiecePosition();
             if (ghostPos.Y != piecePos.Y)
             {
