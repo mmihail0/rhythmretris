@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using osu.Game.Beatmaps;
@@ -22,9 +23,12 @@ namespace osu.Game.Rulesets.Tetris.Beatmaps
             IBeatmap beatmap,
             CancellationToken cancellationToken)
         {
+            double duration = Math.Max(0, original.GetEndTime() - original.StartTime);
+
             yield return new TetrisHitObject
             {
-                StartTime = original.StartTime
+                StartTime = original.StartTime,
+                Duration = duration
             };
         }
     }

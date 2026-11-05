@@ -11,6 +11,7 @@ using osu.Framework.Input.Events;
 using osu.Game.Beatmaps;
 using osu.Game.Beatmaps.ControlPoints;
 using osu.Game.Graphics;
+using osu.Game.Rulesets.Objects;
 using osu.Game.Rulesets.Objects.Drawables;
 using osu.Game.Rulesets.Scoring;
 using osu.Game.Rulesets.Tetris.Objects;
@@ -627,23 +628,25 @@ namespace osu.Game.Rulesets.Tetris.UI
             if (noteTimes.Length == 0)
                 return false;
 
-            if (currentTime < noteTimes[0] - 25.0)
+            // 1. Pre-song intro before the very first note
+            if (currentTime < noteTimes[0] - 150.0)
             {
-                resumeTime = noteTimes[0];
+                resumeTime = noteTimes[0] - 150.0;
                 return true;
             }
 
-            int search = Array.BinarySearch(noteTimes, currentTime);
-            int nextIdx = search >= 0 ? search : ~search;
-
-            if (nextIdx >= noteTimes.Length)
-                return false;
-
-            double nextTime = noteTimes[nextIdx];
-            if (nextTime - currentTime > 350.0)
+            // 2. Official osu! beatmap breaks (where the mapper explicitly placed a BreakPeriod)
+            var activeBeatmap = Beatmap ?? workingBeatmap?.Value?.Beatmap;
+            if (activeBeatmap?.Breaks != null)
             {
-                resumeTime = nextTime;
-                return true;
+                foreach (var brk in activeBeatmap.Breaks)
+                {
+                    if (brk.HasEffect && currentTime >= brk.StartTime && currentTime < brk.EndTime - 250.0)
+                    {
+                        resumeTime = brk.EndTime - 250.0;
+                        return true;
+                    }
+                }
             }
 
             return false;
@@ -856,24 +859,38 @@ namespace osu.Game.Rulesets.Tetris.UI
             int count = activeBeatmap.HitObjects.Count;
             if (count > 0)
             {
-                noteTimes = new double[count];
+                var expandedTimes = new List<double>(count * 2);
                 for (int i = 0; i < count; i++)
-                    noteTimes[i] = activeBeatmap.HitObjects[i].StartTime;
-                Array.Sort(noteTimes);
+                {
+                    var ho = activeBeatmap.HitObjects[i];
+                    expandedTimes.Add(ho.StartTime);
+
+                    double endTime = ho is TetrisHitObject tho ? tho.EndTime : ho.GetEndTime();
+                    if (endTime > ho.StartTime + 120.0)
+                    {
+                        double beatLen = activeBeatmap.ControlPointInfo.TimingPointAt(ho.StartTime).BeatLength;
+                        double tickStep = Math.Clamp(beatLen * 0.5, 100.0, 350.0);
+                        for (double t = ho.StartTime + tickStep; t <= endTime + 5.0; t += tickStep)
+                            expandedTimes.Add(t);
+                    }
+                }
+
+                expandedTimes.Sort();
+                noteTimes = expandedTimes.ToArray();
             }
 
             double npsScale = 1.0;
-            if (noteTimes.Length > 1)
+            if (count > 1 && noteTimes.Length > 1)
             {
                 double durationSeconds = Math.Max((noteTimes[^1] - noteTimes[0]) / 1000.0, 10.0);
-                baseNps = noteTimes.Length / durationSeconds;
+                baseNps = count / durationSeconds;
                 npsScale = 1.0 + Math.Clamp(baseNps * 0.12, 0.05, 1.5);
             }
 
             densityGravityMultiplier = 2.0 * npsScale;
 
             if (noteTimes.Length > 0 && isWaitingForNoteSpawn && nextSpawnNoteTime == double.MinValue)
-                nextSpawnNoteTime = noteTimes[0];
+                nextSpawnNoteTime = noteTimes[0] - 150.0;
         }
 
         private double GetDynamicGravityMultiplier(double currentTime, ControlPointInfo? controlPointInfo)
@@ -1133,22 +1150,15 @@ namespace osu.Game.Rulesets.Tetris.UI
                 else
                 {
                     lockDelayTimer = 0;
-                    if (noteTimes.Length > 0)
-                    {
-                        // Solution 1.3: Pure Note-Stepped Gravity — pieces step down when beatmap HitObjects trigger
-                        if (noteSteps > 0 && (Time.Current - lastDropTime) >= 35.0)
-                        {
-                            for (int i = 0; i < noteSteps && !IsPieceGrounded(); i++)
-                                StepGravity();
 
-                            lastDropTime = Time.Current;
-                        }
-                    }
-                    else
+                    // Pause gravity during official beatmap breaks or pre-song intro
+                    if (!ShouldDeferSpawnForPause(Time.Current, out _))
                     {
                         double dynamicMultiplier = GetDynamicGravityMultiplier(Time.Current, controlPointInfo);
                         double stepInterval = timingPoint.BeatLength / Math.Max(dynamicMultiplier, 0.15);
-                        if (Time.Current - lastDropTime >= stepInterval)
+                        bool shouldStepOnNote = noteSteps > 0 && (Time.Current - lastDropTime) >= stepInterval * 0.45;
+
+                        if (shouldStepOnNote || Time.Current - lastDropTime >= stepInterval)
                         {
                             StepGravity();
                             lastDropTime = Time.Current;
