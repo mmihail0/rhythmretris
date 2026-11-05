@@ -49,6 +49,8 @@ namespace osu.Game.Rulesets.Tetris.UI
         private bool isToppedOut;
         private bool isQueueDepleting;
         private bool isSongFinished;
+        private bool isWaitingForNoteSpawn = true;
+        private double nextSpawnNoteTime = double.MinValue;
         private double densityGravityMultiplier = 1.0;
         private double baseNps = 2.0;
         private double[] noteTimes = Array.Empty<double>();
@@ -465,7 +467,11 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            SpawnNextPiece();
+            currentPiece = 0;
+            isWaitingForNoteSpawn = true;
+            EnsureBagHasPieces(7);
+            UpdateQueuePreviews();
+            RedrawGrid();
         }
 
         private Drawable[] CreateNextSlotContainers(float panelWidth, float bodyHeight)
@@ -615,6 +621,34 @@ namespace osu.Game.Rulesets.Tetris.UI
                 RefillBag();
         }
 
+        private bool ShouldDeferSpawnForPause(double currentTime, out double resumeTime)
+        {
+            resumeTime = currentTime;
+            if (noteTimes.Length == 0)
+                return false;
+
+            if (currentTime < noteTimes[0] - 25.0)
+            {
+                resumeTime = noteTimes[0];
+                return true;
+            }
+
+            int search = Array.BinarySearch(noteTimes, currentTime);
+            int nextIdx = search >= 0 ? search : ~search;
+
+            if (nextIdx >= noteTimes.Length)
+                return false;
+
+            double nextTime = noteTimes[nextIdx];
+            if (nextTime - currentTime > 350.0)
+            {
+                resumeTime = nextTime;
+                return true;
+            }
+
+            return false;
+        }
+
         private void SpawnNextPiece()
         {
             if (isSongFinished)
@@ -626,6 +660,7 @@ namespace osu.Game.Rulesets.Tetris.UI
             if (bag.Count == 0 || pastLastNote)
             {
                 isSongFinished = true;
+                isWaitingForNoteSpawn = false;
                 currentPiece = 0;
                 bag.Clear();
                 UpdateQueuePreviews();
@@ -633,6 +668,17 @@ namespace osu.Game.Rulesets.Tetris.UI
                 return;
             }
 
+            if (Clock != null && ShouldDeferSpawnForPause(Time.Current, out double resumeTime))
+            {
+                currentPiece = 0;
+                isWaitingForNoteSpawn = true;
+                nextSpawnNoteTime = resumeTime;
+                UpdateQueuePreviews();
+                RedrawGrid();
+                return;
+            }
+
+            isWaitingForNoteSpawn = false;
             currentPiece = bag[0];
             bag.RemoveAt(0);
             EnsureBagHasPieces(7);
@@ -824,7 +870,10 @@ namespace osu.Game.Rulesets.Tetris.UI
                 npsScale = 1.0 + Math.Clamp(baseNps * 0.12, 0.05, 1.5);
             }
 
-            densityGravityMultiplier = 1.9 * npsScale;
+            densityGravityMultiplier = 2.0 * npsScale;
+
+            if (noteTimes.Length > 0 && isWaitingForNoteSpawn && nextSpawnNoteTime == double.MinValue)
+                nextSpawnNoteTime = noteTimes[0];
         }
 
         private double GetDynamicGravityMultiplier(double currentTime, ControlPointInfo? controlPointInfo)
@@ -958,9 +1007,9 @@ namespace osu.Game.Rulesets.Tetris.UI
                 int crossedCount = latestPassedIdx - lastProcessedNoteIndex;
                 lastProcessedNoteIndex = latestPassedIdx;
 
-                // Pure Note-Stepped Gravity: step on each beatmap note hit, with an extra step on wide beat gaps scaled by 1.9x difficulty
+                // Pure Note-Stepped Gravity: step on each beatmap note hit, with bonus steps on wider beat gaps scaled by 2.0x difficulty
                 double gapSincePrev = prevIdx >= 0 ? noteTimes[latestPassedIdx] - noteTimes[prevIdx] : timingPoint.BeatLength;
-                int bonusStep = gapSincePrev >= timingPoint.BeatLength * 0.85 ? 1 : 0;
+                int bonusStep = gapSincePrev >= timingPoint.BeatLength * 1.35 ? 2 : (gapSincePrev >= timingPoint.BeatLength * 0.70 ? 1 : 0);
                 return Math.Clamp(crossedCount + bonusStep, 1, 3);
             }
 
@@ -997,16 +1046,34 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             UpdateProgressBar(Time.Current, controlPointInfo);
 
-            if (isSongFinished || currentPiece <= 0)
+            if (isSongFinished)
                 return;
 
             if (noteTimes.Length > 0 && Time.Current > noteTimes[^1] + 350.0)
             {
                 isSongFinished = true;
+                isWaitingForNoteSpawn = false;
                 currentPiece = 0;
                 bag.Clear();
                 UpdateQueuePreviews();
                 RedrawGrid();
+                return;
+            }
+
+            int noteSteps = ConsumeNoteGravitySteps(Time.Current, timingPoint);
+
+            if (isWaitingForNoteSpawn || currentPiece <= 0)
+            {
+                if (noteTimes.Length == 0 && Time.Current >= 0)
+                {
+                    isWaitingForNoteSpawn = false;
+                    SpawnNextPiece();
+                }
+                else if (noteTimes.Length > 0 && Time.Current >= nextSpawnNoteTime - 25.0)
+                {
+                    isWaitingForNoteSpawn = false;
+                    SpawnNextPiece();
+                }
                 return;
             }
 
@@ -1051,8 +1118,6 @@ namespace osu.Game.Rulesets.Tetris.UI
                     }
                 }
             }
-
-            int noteSteps = ConsumeNoteGravitySteps(Time.Current, timingPoint);
 
             if (Time.Current >= 0)
             {
