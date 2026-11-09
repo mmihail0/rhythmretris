@@ -12,7 +12,7 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
 {
     public class TetrisDifficultyCalculator : DifficultyCalculator
     {
-        public override int Version => 6;
+        public override int Version => 7;
 
         public TetrisDifficultyCalculator(IRulesetInfo ruleset, IWorkingBeatmap beatmap)
             : base(ruleset, beatmap)
@@ -50,6 +50,9 @@ namespace osu.Game.Rulesets.Tetris.Difficulty
 
             double effectiveStepsPerMinute = bpm * 2.0 * npsScale;
             double starRating = effectiveStepsPerMinute / 90.0;
+
+            if (mods.Any(m => m is ModHardRock))
+                starRating *= 1.25;
 
             if (mods.Any(m => m is ModHidden))
                 starRating *= 1.15;

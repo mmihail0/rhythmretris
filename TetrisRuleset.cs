@@ -51,6 +51,7 @@ namespace osu.Game.Rulesets.Tetris
                 case ModType.DifficultyIncrease:
                     return new Mod[]
                     {
+                        new TetrisModHardRock(),
                         new MultiMod(new TetrisModSuddenDeath(), new TetrisModPerfect()),
                         new MultiMod(new TetrisModDoubleTime(), new TetrisModNightcore()),
                         new TetrisModHidden(),

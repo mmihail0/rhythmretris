@@ -47,6 +47,8 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         public bool IsHidden { get; set; }
 
+        public bool IsHardRock { get; set; }
+
         private bool isToppedOut;
         private bool isQueueDepleting;
         private bool isSongFinished;
@@ -770,9 +772,10 @@ namespace osu.Game.Rulesets.Tetris.UI
         {
             RenderMiniPiece(holdPieceContainer, heldPiece, canHold);
 
+            int visibleSlots = IsHardRock ? 3 : 5;
             for (int i = 0; i < 5; i++)
             {
-                int nextPiece = i < bag.Count ? bag[i] : 0;
+                int nextPiece = (i < visibleSlots && i < bag.Count) ? bag[i] : 0;
                 RenderMiniPiece(nextPieceContainers[i], nextPiece, true);
             }
         }
@@ -895,15 +898,17 @@ namespace osu.Game.Rulesets.Tetris.UI
 
         private double GetDynamicGravityMultiplier(double currentTime, ControlPointInfo? controlPointInfo)
         {
+            double hardRockSpeed = IsHardRock ? 1.30 : 1.0;
+
             if (noteTimes.Length == 0)
-                return densityGravityMultiplier;
+                return densityGravityMultiplier * hardRockSpeed;
 
             // Pre-first-note intro: start calm and ramp up toward the first note
             if (currentTime < noteTimes[0])
             {
                 double timeUntilFirst = noteTimes[0] - currentTime;
                 double introFactor = 0.40 + 0.45 * (1.0 - Math.Clamp(timeUntilFirst / 2000.0, 0.0, 1.0));
-                return densityGravityMultiplier * introFactor;
+                return densityGravityMultiplier * introFactor * hardRockSpeed;
             }
 
             // Post-final-note outro: coast to a gentle crawl once the chart finishes
@@ -911,7 +916,7 @@ namespace osu.Game.Rulesets.Tetris.UI
             {
                 double timeSinceLast = currentTime - noteTimes[^1];
                 double postOutroFactor = 0.40 - 0.25 * Math.Clamp(timeSinceLast / 1200.0, 0.0, 1.0);
-                return densityGravityMultiplier * postOutroFactor;
+                return densityGravityMultiplier * postOutroFactor * hardRockSpeed;
             }
 
             int search = Array.BinarySearch(noteTimes, currentTime);
@@ -978,7 +983,7 @@ namespace osu.Game.Rulesets.Tetris.UI
 
             sectionScale *= outroFactor;
 
-            return densityGravityMultiplier * sectionScale;
+            return densityGravityMultiplier * sectionScale * hardRockSpeed;
         }
 
         private void UpdateProgressBar(double currentTime, ControlPointInfo? controlPointInfo)
@@ -1140,8 +1145,9 @@ namespace osu.Game.Rulesets.Tetris.UI
             {
                 if (IsPieceGrounded())
                 {
+                    double effectiveLockDelay = IsHardRock ? 320.0 : lock_delay_duration;
                     lockDelayTimer += dt;
-                    if (lockDelayTimer >= lock_delay_duration)
+                    if (lockDelayTimer >= effectiveLockDelay)
                     {
                         LockPiece();
                         lastDropTime = Time.Current;
@@ -1300,19 +1306,73 @@ namespace osu.Game.Rulesets.Tetris.UI
                 }
             }
 
-            // Option A: Count newly buried empty holes directly underneath the locked piece
+            // Option A + Y-Level Hole Damage: Count newly buried empty holes directly underneath the locked piece
             int holesCreated = 0;
+            double totalHoleDamage = 0.0;
             for (int gx = 0; gx < Columns; gx++)
             {
                 int bottomY = lowestPieceRowInCol[gx];
-                if (bottomY >= 0 && bottomY + 1 < Rows && grid[gx, bottomY + 1] == 0)
+                int holeY = bottomY + 1;
+                if (bottomY >= 0 && holeY < Rows && grid[gx, holeY] == 0)
+                {
                     holesCreated++;
+                    totalHoleDamage += CalculateHoleDamageForYLevel(holeY);
+                }
             }
 
             int linesCleared = ClearLines();
             UpdateDangerState();
+
+            if (healthProcessor is TetrisHealthProcessor tetrisHealth)
+            {
+                if (linesCleared > 0)
+                {
+                    double baseHeal = linesCleared switch
+                    {
+                        1 => 0.08,
+                        2 => 0.18,
+                        3 => 0.30,
+                        _ => 0.50
+                    };
+                    tetrisHealth.ApplyPlacementHeal(IsHardRock ? baseHeal * 0.65 : baseHeal);
+                }
+                else if (holesCreated == 0)
+                {
+                    tetrisHealth.ApplyPlacementHeal(IsHardRock ? 0.008 : 0.015);
+                }
+                else
+                {
+                    tetrisHealth.ApplyHoleDamage(totalHoleDamage);
+                    if (tetrisHealth.HealthDepleted)
+                    {
+                        DrawableTetrisHitObject.IsDangerState = true;
+                        TriggerNearestHitObjectWithResult(HitResult.Miss);
+
+                        if (healthProcessor?.HasFailed == true)
+                        {
+                            isToppedOut = true;
+                            return;
+                        }
+                    }
+                }
+            }
+
             JudgePieceLock(linesCleared, holesCreated);
             SpawnNextPiece();
+        }
+
+        private double CalculateHoleDamageForYLevel(int holeY)
+        {
+            // Bottom range (rows 14..19): light damage
+            if (holeY >= 14)
+                return IsHardRock ? 0.07 : 0.04;
+
+            // Middle range (rows 8..13): moderate damage
+            if (holeY >= 8)
+                return IsHardRock ? 0.13 : 0.08;
+
+            // Upper / Danger range (rows 0..7): heavy damage
+            return IsHardRock ? 0.22 : 0.14;
         }
 
         private int GetHighestOccupiedRow()

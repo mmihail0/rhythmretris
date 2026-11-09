@@ -7,6 +7,19 @@ using osu.Game.Rulesets.UI;
 
 namespace osu.Game.Rulesets.Tetris.Mods
 {
+    public class TetrisModHardRock : ModHardRock, IApplicableToDrawableRuleset<TetrisHitObject>
+    {
+        public override double ScoreMultiplier => 1.10;
+
+        public override LocalisableString Description => "Faster gravity, shorter lock delay, fewer next previews, and heavier health damage from buried holes.";
+
+        public void ApplyToDrawableRuleset(DrawableRuleset<TetrisHitObject> drawableRuleset)
+        {
+            if (drawableRuleset.Playfield is TetrisPlayfield tetrisPlayfield)
+                tetrisPlayfield.IsHardRock = true;
+        }
+    }
+
     public class TetrisModDoubleTime : ModDoubleTime
     {
     }
